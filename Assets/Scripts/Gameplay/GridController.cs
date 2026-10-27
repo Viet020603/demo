@@ -36,6 +36,12 @@ namespace Demo.Gameplay
         [SerializeField] private int cullPadding = 1;
         [SerializeField] private float startOrthoSize = 6f;
 
+        [Header("Debug Gizmos")]
+        [SerializeField] private bool drawCameraGizmos = true;
+        [SerializeField] private Color cameraViewColor = new Color(0f, 1f, 1f, 0.9f);
+        [SerializeField] private Color cullViewColor = new Color(1f, 0.85f, 0f, 0.9f);
+        [SerializeField] private Color mapBoundsColor = new Color(1f, 0f, 0f, 0.9f);
+
         public event Action<Vector2Int> CellClicked;
 
         private GridData _data;
@@ -74,7 +80,7 @@ namespace Demo.Gameplay
             _selectionMarker = CreateSelectionMarker();
 
             // Camera: start centered on the map, limited to the map area.
-            var worldBounds = new Rect(origin.x, origin.y, width * cellSize, height * cellSize);
+            var worldBounds = GetMapWorldBounds();
             _camController.SetBounds(worldBounds);
             mainCamera.transform.position = new Vector3(worldBounds.center.x, worldBounds.center.y, -10f);
             _camController.SetZoom(startOrthoSize);
@@ -309,6 +315,52 @@ namespace Demo.Gameplay
         {
             foreach (var kv in _active) _pool.Release(kv.Value);
             _active.Clear();
+        }
+
+        private Rect GetMapWorldBounds()
+        {
+            return new Rect(origin.x, origin.y, width * cellSize, height * cellSize);
+        }
+
+        private void OnDrawGizmos()
+        {
+            if (!drawCameraGizmos) return;
+
+            // Map bounds (red)
+            Gizmos.color = mapBoundsColor;
+            var map = GetMapWorldBounds();
+            DrawRect(map);
+
+            if (mainCamera == null)
+                mainCamera = Camera.main;
+            if (mainCamera == null) return;
+
+            // Camera view rect (cyan)
+            float halfH = mainCamera.orthographicSize;
+            float halfW = halfH * mainCamera.aspect;
+            Vector3 c = mainCamera.transform.position;
+            Rect camRect = Rect.MinMaxRect(c.x - halfW, c.y - halfH, c.x + halfW, c.y + halfH);
+            Gizmos.color = cameraViewColor;
+            DrawRect(camRect);
+
+            // Culling rect (yellow) in world space
+            float pad = cullPadding * cellSize;
+            Rect cullRect = Rect.MinMaxRect(camRect.xMin - pad, camRect.yMin - pad, camRect.xMax + pad, camRect.yMax + pad);
+            Gizmos.color = cullViewColor;
+            DrawRect(cullRect);
+        }
+
+        private static void DrawRect(Rect r)
+        {
+            Vector3 bl = new Vector3(r.xMin, r.yMin, 0f);
+            Vector3 br = new Vector3(r.xMax, r.yMin, 0f);
+            Vector3 tr = new Vector3(r.xMax, r.yMax, 0f);
+            Vector3 tl = new Vector3(r.xMin, r.yMax, 0f);
+
+            Gizmos.DrawLine(bl, br);
+            Gizmos.DrawLine(br, tr);
+            Gizmos.DrawLine(tr, tl);
+            Gizmos.DrawLine(tl, bl);
         }
     }
 }

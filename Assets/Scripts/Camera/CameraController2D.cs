@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 namespace Demo.CameraControl
 {
@@ -24,6 +23,25 @@ namespace Demo.CameraControl
         /// <summary>True if the last press turned into a drag (so it must NOT count as a click).</summary>
         public bool DraggedThisPress { get; private set; }
 
+        /// <summary>Current camera visible rect in world-space.</summary>
+        public Rect CurrentViewRect
+        {
+            get
+            {
+                float halfH = _cam.orthographicSize;
+                float halfW = halfH * _cam.aspect;
+                Vector3 p = transform.position;
+                return Rect.MinMaxRect(p.x - halfW, p.y - halfH, p.x + halfW, p.y + halfH);
+            }
+        }
+
+        /// <summary>Current world bounds clamp rect (if configured).</summary>
+        public bool TryGetBounds(out Rect bounds)
+        {
+            bounds = _bounds;
+            return _hasBounds;
+        }
+
         private void Awake()
         {
             _cam = GetComponent<Camera>();
@@ -45,14 +63,14 @@ namespace Demo.CameraControl
 
         private void Update()
         {
-            var mouse = Mouse.current;
+            var mouse = UnityEngine.InputSystem.Mouse.current;
             if (mouse == null) return;
 
             HandleDrag(mouse);
             HandleZoom(mouse);
         }
 
-        private void HandleDrag(Mouse mouse)
+        private void HandleDrag(UnityEngine.InputSystem.Mouse mouse)
         {
             bool downNow = mouse.leftButton.wasPressedThisFrame || mouse.middleButton.wasPressedThisFrame;
             bool held = mouse.leftButton.isPressed || mouse.middleButton.isPressed;
@@ -86,7 +104,7 @@ namespace Demo.CameraControl
             if (!held) _pressed = false;
         }
 
-        private void HandleZoom(Mouse mouse)
+        private void HandleZoom(UnityEngine.InputSystem.Mouse mouse)
         {
             float scroll = mouse.scroll.ReadValue().y;
             if (Mathf.Abs(scroll) < 0.001f) return;

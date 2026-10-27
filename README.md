@@ -6,11 +6,15 @@ Repo: https://github.com/Viet020603/demo
 
 ## Features
 - 31x31 data-driven grid (no 961 per-cell GameObjects)
-- **Drag to pan the camera** (left or middle mouse), clamped to the map
-- **Viewport culling**: only objects inside the camera view are active. When the camera moves, objects leaving the view are returned to the pool and objects entering the view are spawned automatically
-- Objects are shown automatically from grid data (no click needed); initial content is randomly seeded
+- Drag to pan the camera (left or middle mouse), clamped to the map
+- Viewport culling: only objects inside camera view are active
+- Objects are shown automatically from grid data; initial content is seeded
 - Every cell is clickable via mouse -> cell math (no colliders)
 - Selection marker, save/load/clear
+- **Debug Gizmos**:
+  - **Red** = map bounds
+  - **Cyan** = camera view rect
+  - **Yellow** = culling influence rect (camera + padding)
 
 ## Controls
 - Left drag / middle drag: move camera
@@ -28,3 +32,5 @@ If you see *"You are trying to read Input using the UnityEngine.Input class"*, t
 - `initialFillRate`, `randomSeed`: amount of seeded objects
 - `cullPadding`: extra cells kept alive around the view
 - `startOrthoSize`: initial zoom
+- `drawCameraGizmos`: enable/disable debug rectangles
+- `cameraViewColor`, `cullViewColor`, `mapBoundsColor`: gizmo colors
