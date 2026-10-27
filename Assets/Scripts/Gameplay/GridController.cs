@@ -3,7 +3,6 @@ using UnityEngine;
 using Demo.Grid;
 using Demo.Rendering;
 using Demo.InputSystem;
-using Demo.Gameplay;
 using Demo.SaveLoad;
 
 namespace Demo.Gameplay
@@ -33,7 +32,8 @@ namespace Demo.Gameplay
 
         private void Awake()
         {
-            if (mainCamera == null) mainCamera = Camera.main;
+            BootstrapIfNeeded();
+
             _data = new GridData(width, height);
             _math = new GridMath(origin, cellSize);
             _input = new GridInputReader(mainCamera, _math, width, height);
@@ -50,12 +50,46 @@ namespace Demo.Gameplay
             var poolObj = new GameObject("ObjectPool");
             poolObj.transform.SetParent(objectRoot);
             _pool = poolObj.AddComponent<SimplePool>();
+            _pool.SetPrefab(placePrefab != null ? placePrefab : CreateFallbackPrefab());
+        }
 
-            // assign prefab via reflection-safe serialized backing by helper
-            var so = new UnityEditor.SerializedObject(_pool);
-            var prefabProp = so.FindProperty("prefab");
-            prefabProp.objectReferenceValue = placePrefab;
-            so.ApplyModifiedPropertiesWithoutUndo();
+        private void BootstrapIfNeeded()
+        {
+            if (mainCamera == null)
+            {
+                mainCamera = Camera.main;
+                if (mainCamera == null)
+                {
+                    var camObj = new GameObject("Main Camera");
+                    mainCamera = camObj.AddComponent<Camera>();
+                    camObj.tag = "MainCamera";
+                }
+            }
+
+            mainCamera.orthographic = true;
+            if (mainCamera.GetComponent<Demo.CameraControl.CameraController2D>() == null)
+                mainCamera.gameObject.AddComponent<Demo.CameraControl.CameraController2D>();
+
+            if (gridRenderer == null)
+            {
+                var gridObj = new GameObject("GridRenderer");
+                gridRenderer = gridObj.AddComponent<GridLineRenderer>();
+            }
+        }
+
+        private GameObject CreateFallbackPrefab()
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            go.name = "CellObject_Fallback";
+            var renderer = go.GetComponent<MeshRenderer>();
+            var mat = new Material(Shader.Find("Sprites/Default"));
+            mat.color = new Color(1f, 0.4f, 0.1f, 0.95f);
+            renderer.sharedMaterial = mat;
+            go.transform.localScale = new Vector3(0.8f, 0.8f, 1f);
+            var col = go.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+            go.SetActive(false);
+            return go;
         }
 
         private void Update()
@@ -85,7 +119,7 @@ namespace Demo.Gameplay
             c.objectId = 1;
             var pos = _math.CellToWorldCenter(cell);
             var go = _pool.Get(pos);
-            _spawnedByIndex[idx] = go;
+            if (go != null) _spawnedByIndex[idx] = go;
         }
 
         private void Remove(Vector2Int cell)
@@ -131,7 +165,7 @@ namespace Demo.Gameplay
                     if (_data.cells[idx].objectId != 0)
                     {
                         var go = _pool.Get(_math.CellToWorldCenter(new Vector2Int(x, y)));
-                        _spawnedByIndex[idx] = go;
+                        if (go != null) _spawnedByIndex[idx] = go;
                     }
                 }
             }
