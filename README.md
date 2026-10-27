@@ -1,38 +1,30 @@
-# Unity Grid Strategy Demo (31x31) - Complete Auto-Bootstrap
+# Unity Grid Strategy Demo (31x31)
 
-Unity version: **6000.3.20f1**
+Unity version: **6000.3.20f1** · Uses the **new Input System** package.
 
 Repo: https://github.com/Viet020603/demo
 
-## What is completed
-- Full Unity project scaffold
-- Auto-bootstrap on scene load (no manual object setup required)
+## Features
 - 31x31 data-driven grid (no 961 per-cell GameObjects)
-- **Every grid cell is clickable** via mouse-to-cell math conversion
-- Place/remove objects on cells
-- Selection marker appears on clicked cell
-- Camera pan/zoom
-- Save/Load/Clear shortcuts
+- **Drag to pan the camera** (left or middle mouse), clamped to the map
+- **Viewport culling**: only objects inside the camera view are active. When the camera moves, objects leaving the view are returned to the pool and objects entering the view are spawned automatically
+- Objects are shown automatically from grid data (no click needed); initial content is randomly seeded
+- Every cell is clickable via mouse -> cell math (no colliders)
+- Selection marker, save/load/clear
 
 ## Controls
-- Left click: click/select cell + place object
+- Left drag / middle drag: move camera
+- Left click (no drag): select cell and toggle object
 - Right click: remove object
-- Middle mouse drag: pan camera
 - Mouse wheel: zoom
-- `S`: save
-- `L`: load
-- `C`: clear all
+- `S` save, `L` load, `C` clear
 
-## Clone and run
-```bash
-git clone https://github.com/Viet020603/demo.git
-```
-1. Open Unity Hub
-2. Add project folder `demo`
-3. Open with Unity `6000.3.20f1`
-4. Open `Assets/Scenes/GameScene.unity`
-5. Press Play
+## Setup
+Open with Unity 6000.3.20f1, open `Assets/Scenes/GameScene.unity`, press Play.
 
-## Notes
-- Runtime automatically creates required bootstrap objects if missing.
-- If `placePrefab` is not assigned, system uses a fallback Quad visual so demo always works.
+If you see *"You are trying to read Input using the UnityEngine.Input class"*, this version already fixed it by using `UnityEngine.InputSystem` (`Mouse.current`, `Keyboard.current`). Make sure **Project Settings > Player > Active Input Handling** is `Input System Package (New)` or `Both`.
+
+## Tuning (GridController inspector)
+- `initialFillRate`, `randomSeed`: amount of seeded objects
+- `cullPadding`: extra cells kept alive around the view
+- `startOrthoSize`: initial zoom

@@ -1,10 +1,12 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using Demo.CameraControl;
 using Demo.Grid;
 using Demo.Rendering;
 using Demo.InputSystem;
 using Demo.SaveLoad;
-using System;
 
 namespace Demo.Gameplay
 {
@@ -16,6 +18,10 @@ namespace Demo.Gameplay
         [SerializeField] private float cellSize = 1f;
         [SerializeField] private Vector2 origin = Vector2.zero;
 
+        [Header("Initial content")]
+        [SerializeField, Range(0f, 1f)] private float initialFillRate = 0.3f;
+        [SerializeField] private int randomSeed = 12345;
+
         [Header("Refs")]
         [SerializeField] private Camera mainCamera;
         [SerializeField] private GridLineRenderer gridRenderer;
@@ -23,9 +29,12 @@ namespace Demo.Gameplay
 
         [Header("Visual")]
         [SerializeField] private Transform objectRoot;
-
-        [Header("Selection")]
         [SerializeField] private Color selectionColor = new Color(0.2f, 0.7f, 1f, 0.35f);
+
+        [Header("Culling")]
+        [Tooltip("Extra cells around the camera view that are kept alive to avoid pop-in.")]
+        [SerializeField] private int cullPadding = 1;
+        [SerializeField] private float startOrthoSize = 6f;
 
         public event Action<Vector2Int> CellClicked;
 
@@ -33,9 +42,13 @@ namespace Demo.Gameplay
         private GridMath _math;
         private GridInputReader _input;
         private SimplePool _pool;
-
-        private readonly Dictionary<int, GameObject> _spawnedByIndex = new();
+        private CameraController2D _camController;
         private GameObject _selectionMarker;
+
+        // Only cells that are inside the camera view have a live GameObject here.
+        private readonly Dictionary<int, GameObject> _active = new();
+        private readonly List<int> _tmpRelease = new();
+        private RectInt _lastVisible = new RectInt(-1, -1, 0, 0);
 
         private void Awake()
         {
@@ -45,14 +58,13 @@ namespace Demo.Gameplay
             _math = new GridMath(origin, cellSize);
             _input = new GridInputReader(mainCamera, _math, width, height);
 
+            SeedInitialContent();
+
             if (gridRenderer != null)
                 gridRenderer.Configure(width, height, cellSize, origin);
 
             if (objectRoot == null)
-            {
-                var root = new GameObject("Objects");
-                objectRoot = root.transform;
-            }
+                objectRoot = new GameObject("Objects").transform;
 
             var poolObj = new GameObject("ObjectPool");
             poolObj.transform.SetParent(objectRoot);
@@ -60,6 +72,17 @@ namespace Demo.Gameplay
             _pool.SetPrefab(placePrefab != null ? placePrefab : CreateFallbackPrefab());
 
             _selectionMarker = CreateSelectionMarker();
+
+            // Camera: start centered on the map, limited to the map area.
+            var worldBounds = new Rect(origin.x, origin.y, width * cellSize, height * cellSize);
+            _camController.SetBounds(worldBounds);
+            mainCamera.transform.position = new Vector3(worldBounds.center.x, worldBounds.center.y, -10f);
+            _camController.SetZoom(startOrthoSize);
+        }
+
+        private void Start()
+        {
+            RefreshVisible(true);
         }
 
         private void BootstrapIfNeeded()
@@ -76,8 +99,9 @@ namespace Demo.Gameplay
             }
 
             mainCamera.orthographic = true;
-            if (mainCamera.GetComponent<Demo.CameraControl.CameraController2D>() == null)
-                mainCamera.gameObject.AddComponent<Demo.CameraControl.CameraController2D>();
+            _camController = mainCamera.GetComponent<CameraController2D>();
+            if (_camController == null)
+                _camController = mainCamera.gameObject.AddComponent<CameraController2D>();
 
             if (gridRenderer == null)
             {
@@ -86,15 +110,23 @@ namespace Demo.Gameplay
             }
         }
 
+        private void SeedInitialContent()
+        {
+            var rng = new System.Random(randomSeed);
+            for (int i = 0; i < _data.cells.Length; i++)
+            {
+                if (rng.NextDouble() < initialFillRate)
+                    _data.cells[i].objectId = 1;
+            }
+        }
+
         private GameObject CreateFallbackPrefab()
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
             go.name = "CellObject_Fallback";
-            var renderer = go.GetComponent<MeshRenderer>();
-            var mat = new Material(Shader.Find("Sprites/Default"));
-            mat.color = new Color(1f, 0.4f, 0.1f, 0.95f);
-            renderer.sharedMaterial = mat;
-            go.transform.localScale = new Vector3(0.8f, 0.8f, 1f);
+            var mat = new Material(Shader.Find("Sprites/Default")) { color = new Color(1f, 0.4f, 0.1f, 0.95f) };
+            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+            go.transform.localScale = new Vector3(0.8f * cellSize, 0.8f * cellSize, 1f);
             var col = go.GetComponent<Collider>();
             if (col != null) Destroy(col);
             go.SetActive(false);
@@ -107,15 +139,10 @@ namespace Demo.Gameplay
             marker.name = "SelectionMarker";
             marker.transform.SetParent(objectRoot);
             marker.transform.localScale = new Vector3(cellSize * 0.95f, cellSize * 0.95f, 1f);
-
-            var renderer = marker.GetComponent<MeshRenderer>();
-            var mat = new Material(Shader.Find("Sprites/Default"));
-            mat.color = selectionColor;
-            renderer.sharedMaterial = mat;
-
+            var mat = new Material(Shader.Find("Sprites/Default")) { color = selectionColor };
+            marker.GetComponent<MeshRenderer>().sharedMaterial = mat;
             var col = marker.GetComponent<Collider>();
             if (col != null) Destroy(col);
-
             marker.SetActive(false);
             return marker;
         }
@@ -124,21 +151,99 @@ namespace Demo.Gameplay
         {
             HandleInput();
             HandleSaveLoadShortcuts();
+            RefreshVisible(false); // cheap: only does work when the visible cell rect changes
         }
+
+        // ---------------------------------------------------------------- culling
+
+        private RectInt GetVisibleRect()
+        {
+            float halfH = mainCamera.orthographicSize;
+            float halfW = halfH * mainCamera.aspect;
+            Vector3 c = mainCamera.transform.position;
+
+            int minX = Mathf.FloorToInt((c.x - halfW - origin.x) / cellSize) - cullPadding;
+            int maxX = Mathf.FloorToInt((c.x + halfW - origin.x) / cellSize) + cullPadding;
+            int minY = Mathf.FloorToInt((c.y - halfH - origin.y) / cellSize) - cullPadding;
+            int maxY = Mathf.FloorToInt((c.y + halfH - origin.y) / cellSize) + cullPadding;
+
+            minX = Mathf.Clamp(minX, 0, width - 1);
+            maxX = Mathf.Clamp(maxX, 0, width - 1);
+            minY = Mathf.Clamp(minY, 0, height - 1);
+            maxY = Mathf.Clamp(maxY, 0, height - 1);
+
+            return new RectInt(minX, minY, maxX - minX + 1, maxY - minY + 1);
+        }
+
+        private void RefreshVisible(bool force)
+        {
+            RectInt r = GetVisibleRect();
+            if (!force && r.Equals(_lastVisible)) return;
+            _lastVisible = r;
+
+            // 1) Turn off objects that left the camera view.
+            _tmpRelease.Clear();
+            foreach (var kv in _active)
+            {
+                int x = kv.Key % width;
+                int y = kv.Key / width;
+                if (x < r.xMin || x >= r.xMax || y < r.yMin || y >= r.yMax)
+                    _tmpRelease.Add(kv.Key);
+            }
+            for (int i = 0; i < _tmpRelease.Count; i++)
+            {
+                int idx = _tmpRelease[i];
+                _pool.Release(_active[idx]);
+                _active.Remove(idx);
+            }
+
+            // 2) Turn on objects that entered the camera view.
+            for (int y = r.yMin; y < r.yMax; y++)
+            {
+                for (int x = r.xMin; x < r.xMax; x++)
+                {
+                    int idx = _data.IndexOf(x, y);
+                    if (_data.cells[idx].objectId != 0 && !_active.ContainsKey(idx))
+                        SpawnVisual(idx, x, y);
+                }
+            }
+        }
+
+        private void SpawnVisual(int idx, int x, int y)
+        {
+            var go = _pool.Get(_math.CellToWorldCenter(new Vector2Int(x, y)));
+            if (go != null) _active[idx] = go;
+        }
+
+        private void DespawnVisual(int idx)
+        {
+            if (_active.TryGetValue(idx, out var go))
+            {
+                _pool.Release(go);
+                _active.Remove(idx);
+            }
+        }
+
+        // ---------------------------------------------------------------- input
 
         private void HandleInput()
         {
-            if (!_input.TryGetHoveredCell(out var cell)) return;
+            var mouse = Mouse.current;
+            if (mouse == null) return;
 
-            if (UnityEngine.Input.GetMouseButtonDown(0))
+            // Left click = release without having dragged the camera.
+            if (mouse.leftButton.wasReleasedThisFrame && !_camController.DraggedThisPress)
             {
-                CellClicked?.Invoke(cell);
-                MoveSelection(cell);
-                Place(cell);
+                if (_input.TryGetHoveredCell(out var cell))
+                {
+                    CellClicked?.Invoke(cell);
+                    MoveSelection(cell);
+                    TogglePlace(cell);
+                }
             }
 
-            if (UnityEngine.Input.GetMouseButtonDown(1))
-                Remove(cell);
+            if (mouse.rightButton.wasPressedThisFrame && _input.TryGetHoveredCell(out var rc))
+                Remove(rc);
         }
 
         private void MoveSelection(Vector2Int cell)
@@ -148,44 +253,39 @@ namespace Demo.Gameplay
             _selectionMarker.transform.position = _math.CellToWorldCenter(cell) + new Vector3(0f, 0f, -0.01f);
         }
 
-        private void Place(Vector2Int cell)
+        private void TogglePlace(Vector2Int cell)
         {
-            if (!_data.InBounds(cell.x, cell.y)) return;
             int idx = _data.IndexOf(cell.x, cell.y);
             ref var c = ref _data.Get(cell.x, cell.y);
-            if (c.objectId != 0) return;
-
-            c.objectId = 1;
-            var pos = _math.CellToWorldCenter(cell);
-            var go = _pool.Get(pos);
-            if (go != null) _spawnedByIndex[idx] = go;
+            if (c.objectId == 0)
+            {
+                c.objectId = 1;
+                SpawnVisual(idx, cell.x, cell.y);
+            }
+            else
+            {
+                c.objectId = 0;
+                DespawnVisual(idx);
+            }
         }
 
         private void Remove(Vector2Int cell)
         {
-            if (!_data.InBounds(cell.x, cell.y)) return;
             int idx = _data.IndexOf(cell.x, cell.y);
             ref var c = ref _data.Get(cell.x, cell.y);
             if (c.objectId == 0) return;
-
             c.objectId = 0;
-            if (_spawnedByIndex.TryGetValue(idx, out var go))
-            {
-                _pool.Release(go);
-                _spawnedByIndex.Remove(idx);
-            }
+            DespawnVisual(idx);
         }
 
         private void HandleSaveLoadShortcuts()
         {
-            if (UnityEngine.Input.GetKeyDown(KeyCode.S))
-                GridSaveSystem.Save(_data);
+            var kb = Keyboard.current;
+            if (kb == null) return;
 
-            if (UnityEngine.Input.GetKeyDown(KeyCode.L))
-                LoadFromSave();
-
-            if (UnityEngine.Input.GetKeyDown(KeyCode.C))
-                ClearAll();
+            if (kb.sKey.wasPressedThisFrame) GridSaveSystem.Save(_data);
+            if (kb.lKey.wasPressedThisFrame) LoadFromSave();
+            if (kb.cKey.wasPressedThisFrame) ClearAll();
         }
 
         private void LoadFromSave()
@@ -193,31 +293,22 @@ namespace Demo.Gameplay
             if (!GridSaveSystem.TryLoad(out var save)) return;
             if (save.width != width || save.height != height) return;
 
-            ClearAll();
+            ReleaseAllVisuals();
             _data.cells = save.cells;
-
-            for (int y = 0; y < height; y++)
-            {
-                for (int x = 0; x < width; x++)
-                {
-                    int idx = _data.IndexOf(x, y);
-                    if (_data.cells[idx].objectId != 0)
-                    {
-                        var go = _pool.Get(_math.CellToWorldCenter(new Vector2Int(x, y)));
-                        if (go != null) _spawnedByIndex[idx] = go;
-                    }
-                }
-            }
+            RefreshVisible(true);
         }
 
         private void ClearAll()
         {
-            foreach (var kv in _spawnedByIndex)
-                _pool.Release(kv.Value);
-            _spawnedByIndex.Clear();
-
+            ReleaseAllVisuals();
             for (int i = 0; i < _data.cells.Length; i++)
                 _data.cells[i].objectId = 0;
+        }
+
+        private void ReleaseAllVisuals()
+        {
+            foreach (var kv in _active) _pool.Release(kv.Value);
+            _active.Clear();
         }
     }
 }

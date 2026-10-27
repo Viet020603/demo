@@ -8,7 +8,7 @@ namespace Demo.Bootstrap
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureBootstrap()
         {
-            if (Object.FindObjectOfType<GridController>() != null) return;
+            if (Object.FindFirstObjectByType<GridController>() != null) return;
 
             var go = new GameObject("GameBootstrap");
             go.AddComponent<GridController>();

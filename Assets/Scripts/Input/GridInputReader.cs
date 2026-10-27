@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using Demo.Grid;
 
 namespace Demo.InputSystem
@@ -20,7 +21,12 @@ namespace Demo.InputSystem
 
         public bool TryGetHoveredCell(out Vector2Int cell)
         {
-            Vector3 world = _camera.ScreenToWorldPoint(UnityEngine.Input.mousePosition);
+            cell = default;
+            var mouse = Mouse.current;
+            if (mouse == null) return false;
+
+            Vector2 screen = mouse.position.ReadValue();
+            Vector3 world = _camera.ScreenToWorldPoint(new Vector3(screen.x, screen.y, -_camera.transform.position.z));
             world.z = 0f;
             cell = _gridMath.WorldToCell(world);
             return cell.x >= 0 && cell.y >= 0 && cell.x < _width && cell.y < _height;
