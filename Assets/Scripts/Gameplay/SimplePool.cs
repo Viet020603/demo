@@ -6,20 +6,35 @@ namespace Demo.Gameplay
     {
         [SerializeField] private GameObject prefab;
         [SerializeField] private int prewarm = 16;
+        [SerializeField] private bool allowRuntimeInstantiate = false;
 
         private readonly System.Collections.Generic.Stack<GameObject> _pool = new();
 
+        public int AvailableCount => _pool.Count;
+        public int SpawnedCount { get; private set; }
+
         public void SetPrefab(GameObject value) => prefab = value;
 
-        private void Awake()
+        public void ConfigurePrewarm(int count)
+        {
+            prewarm = Mathf.Max(0, count);
+        }
+
+        public void PrewarmNow()
         {
             if (prefab == null) return;
-            for (int i = 0; i < prewarm; i++)
+            while (SpawnedCount < prewarm)
             {
                 var go = Instantiate(prefab, transform);
                 go.SetActive(false);
                 _pool.Push(go);
+                SpawnedCount++;
             }
+        }
+
+        private void Awake()
+        {
+            PrewarmNow();
         }
 
         public GameObject Get(Vector3 position)
@@ -30,7 +45,21 @@ namespace Demo.Gameplay
                 return null;
             }
 
-            GameObject go = _pool.Count > 0 ? _pool.Pop() : Instantiate(prefab, transform);
+            GameObject go = null;
+            if (_pool.Count > 0)
+            {
+                go = _pool.Pop();
+            }
+            else if (allowRuntimeInstantiate)
+            {
+                go = Instantiate(prefab, transform);
+                SpawnedCount++;
+            }
+            else
+            {
+                return null;
+            }
+
             go.transform.position = position;
             go.SetActive(true);
             return go;

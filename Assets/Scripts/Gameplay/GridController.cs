@@ -36,6 +36,10 @@ namespace Demo.Gameplay
         [SerializeField] private int cullPadding = 1;
         [SerializeField] private float startOrthoSize = 6f;
 
+        [Header("Pool Strategy")]
+        [Tooltip("If true, pool size is fixed to camera-visible cell capacity and runtime instantiate is disabled.")]
+        [SerializeField] private bool fixedPoolByCameraView = true;
+
         [Header("Debug Gizmos")]
         [SerializeField] private bool drawCameraGizmos = true;
         [SerializeField] private Color cameraViewColor = new Color(0f, 1f, 1f, 0.9f);
@@ -51,7 +55,6 @@ namespace Demo.Gameplay
         private CameraController2D _camController;
         private GameObject _selectionMarker;
 
-        // Only cells that are inside the camera view have a live GameObject here.
         private readonly Dictionary<int, GameObject> _active = new();
         private readonly List<int> _tmpRelease = new();
         private RectInt _lastVisible = new RectInt(-1, -1, 0, 0);
@@ -79,16 +82,44 @@ namespace Demo.Gameplay
 
             _selectionMarker = CreateSelectionMarker();
 
-            // Camera: start centered on the map, limited to the map area.
             var worldBounds = GetMapWorldBounds();
             _camController.SetBounds(worldBounds);
             mainCamera.transform.position = new Vector3(worldBounds.center.x, worldBounds.center.y, -10f);
             _camController.SetZoom(startOrthoSize);
+
+            ConfigurePoolCapacityToCamera();
         }
 
         private void Start()
         {
             RefreshVisible(true);
+        }
+
+        private void ConfigurePoolCapacityToCamera()
+        {
+            if (!fixedPoolByCameraView) return;
+
+            int capacity = ComputeVisibleCapacity();
+            // Set internal fields via config methods
+            _pool.ConfigurePrewarm(capacity);
+            _pool.PrewarmNow();
+        }
+
+        private int ComputeVisibleCapacity()
+        {
+            float halfH = mainCamera.orthographicSize;
+            float halfW = halfH * mainCamera.aspect;
+
+            float viewW = halfW * 2f;
+            float viewH = halfH * 2f;
+
+            int visibleCols = Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2;
+            int visibleRows = Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2;
+
+            visibleCols = Mathf.Clamp(visibleCols, 1, width);
+            visibleRows = Mathf.Clamp(visibleRows, 1, height);
+
+            return visibleCols * visibleRows;
         }
 
         private void BootstrapIfNeeded()
@@ -157,10 +188,8 @@ namespace Demo.Gameplay
         {
             HandleInput();
             HandleSaveLoadShortcuts();
-            RefreshVisible(false); // cheap: only does work when the visible cell rect changes
+            RefreshVisible(false);
         }
-
-        // ---------------------------------------------------------------- culling
 
         private RectInt GetVisibleRect()
         {
@@ -187,7 +216,6 @@ namespace Demo.Gameplay
             if (!force && r.Equals(_lastVisible)) return;
             _lastVisible = r;
 
-            // 1) Turn off objects that left the camera view.
             _tmpRelease.Clear();
             foreach (var kv in _active)
             {
@@ -203,7 +231,6 @@ namespace Demo.Gameplay
                 _active.Remove(idx);
             }
 
-            // 2) Turn on objects that entered the camera view.
             for (int y = r.yMin; y < r.yMax; y++)
             {
                 for (int x = r.xMin; x < r.xMax; x++)
@@ -230,14 +257,11 @@ namespace Demo.Gameplay
             }
         }
 
-        // ---------------------------------------------------------------- input
-
         private void HandleInput()
         {
             var mouse = Mouse.current;
             if (mouse == null) return;
 
-            // Left click = release without having dragged the camera.
             if (mouse.leftButton.wasReleasedThisFrame && !_camController.DraggedThisPress)
             {
                 if (_input.TryGetHoveredCell(out var cell))
@@ -326,7 +350,6 @@ namespace Demo.Gameplay
         {
             if (!drawCameraGizmos) return;
 
-            // Map bounds (red)
             Gizmos.color = mapBoundsColor;
             var map = GetMapWorldBounds();
             DrawRect(map);
@@ -335,7 +358,6 @@ namespace Demo.Gameplay
                 mainCamera = Camera.main;
             if (mainCamera == null) return;
 
-            // Camera view rect (cyan)
             float halfH = mainCamera.orthographicSize;
             float halfW = halfH * mainCamera.aspect;
             Vector3 c = mainCamera.transform.position;
@@ -343,7 +365,6 @@ namespace Demo.Gameplay
             Gizmos.color = cameraViewColor;
             DrawRect(camRect);
 
-            // Culling rect (yellow) in world space
             float pad = cullPadding * cellSize;
             Rect cullRect = Rect.MinMaxRect(camRect.xMin - pad, camRect.yMin - pad, camRect.xMax + pad, camRect.yMax + pad);
             Gizmos.color = cullViewColor;
