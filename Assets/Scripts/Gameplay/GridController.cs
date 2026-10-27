@@ -4,6 +4,7 @@ using Demo.Grid;
 using Demo.Rendering;
 using Demo.InputSystem;
 using Demo.SaveLoad;
+using System;
 
 namespace Demo.Gameplay
 {
@@ -23,12 +24,18 @@ namespace Demo.Gameplay
         [Header("Visual")]
         [SerializeField] private Transform objectRoot;
 
+        [Header("Selection")]
+        [SerializeField] private Color selectionColor = new Color(0.2f, 0.7f, 1f, 0.35f);
+
+        public event Action<Vector2Int> CellClicked;
+
         private GridData _data;
         private GridMath _math;
         private GridInputReader _input;
         private SimplePool _pool;
 
         private readonly Dictionary<int, GameObject> _spawnedByIndex = new();
+        private GameObject _selectionMarker;
 
         private void Awake()
         {
@@ -51,6 +58,8 @@ namespace Demo.Gameplay
             poolObj.transform.SetParent(objectRoot);
             _pool = poolObj.AddComponent<SimplePool>();
             _pool.SetPrefab(placePrefab != null ? placePrefab : CreateFallbackPrefab());
+
+            _selectionMarker = CreateSelectionMarker();
         }
 
         private void BootstrapIfNeeded()
@@ -92,6 +101,25 @@ namespace Demo.Gameplay
             return go;
         }
 
+        private GameObject CreateSelectionMarker()
+        {
+            var marker = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            marker.name = "SelectionMarker";
+            marker.transform.SetParent(objectRoot);
+            marker.transform.localScale = new Vector3(cellSize * 0.95f, cellSize * 0.95f, 1f);
+
+            var renderer = marker.GetComponent<MeshRenderer>();
+            var mat = new Material(Shader.Find("Sprites/Default"));
+            mat.color = selectionColor;
+            renderer.sharedMaterial = mat;
+
+            var col = marker.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
+            marker.SetActive(false);
+            return marker;
+        }
+
         private void Update()
         {
             HandleInput();
@@ -103,10 +131,21 @@ namespace Demo.Gameplay
             if (!_input.TryGetHoveredCell(out var cell)) return;
 
             if (UnityEngine.Input.GetMouseButtonDown(0))
+            {
+                CellClicked?.Invoke(cell);
+                MoveSelection(cell);
                 Place(cell);
+            }
 
             if (UnityEngine.Input.GetMouseButtonDown(1))
                 Remove(cell);
+        }
+
+        private void MoveSelection(Vector2Int cell)
+        {
+            if (_selectionMarker == null) return;
+            _selectionMarker.SetActive(true);
+            _selectionMarker.transform.position = _math.CellToWorldCenter(cell) + new Vector3(0f, 0f, -0.01f);
         }
 
         private void Place(Vector2Int cell)

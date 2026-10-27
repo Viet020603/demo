@@ -8,12 +8,14 @@ Repo: https://github.com/Viet020603/demo
 - Full Unity project scaffold
 - Auto-bootstrap on scene load (no manual object setup required)
 - 31x31 data-driven grid (no 961 per-cell GameObjects)
+- **Every grid cell is clickable** via mouse-to-cell math conversion
 - Place/remove objects on cells
+- Selection marker appears on clicked cell
 - Camera pan/zoom
 - Save/Load/Clear shortcuts
 
 ## Controls
-- Left click: place object
+- Left click: click/select cell + place object
 - Right click: remove object
 - Middle mouse drag: pan camera
 - Mouse wheel: zoom
