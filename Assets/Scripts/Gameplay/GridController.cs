@@ -7,6 +7,10 @@ using Demo.Grid;
 using Demo.Rendering;
 using Demo.InputSystem;
 using Demo.SaveLoad;
+#if UNITY_EDITOR
+using UnityEditor;
+using UnityEditor.SceneManagement;
+#endif
 
 namespace Demo.Gameplay
 {
@@ -22,23 +26,26 @@ namespace Demo.Gameplay
         [SerializeField, Range(0f, 1f)] private float initialFillRate = 0.3f;
         [SerializeField] private int randomSeed = 12345;
 
-        [Header("Refs")]
+        [Header("Scene References (created by 'Build Scene Objects')")]
         [SerializeField] private Camera mainCamera;
         [SerializeField] private GridLineRenderer gridRenderer;
+        [SerializeField] private Transform objectRoot;
+        [SerializeField] private SimplePool pool;
+        [SerializeField] private GameObject selectionMarker;
+        [Tooltip("Optional. If empty, a quad with an auto-created material is used.")]
         [SerializeField] private GameObject placePrefab;
 
         [Header("Visual")]
-        [SerializeField] private Transform objectRoot;
         [SerializeField] private Color selectionColor = new Color(0.2f, 0.7f, 1f, 0.35f);
+        [SerializeField] private Color objectColor = new Color(1f, 0.4f, 0.1f, 0.95f);
+        [SerializeField, Range(0.1f, 1f)] private float objectScale = 0.8f;
 
-        [Header("Culling")]
+        [Header("Culling / Pool")]
         [Tooltip("Extra cells around the camera view that are kept alive to avoid pop-in.")]
         [SerializeField] private int cullPadding = 1;
         [SerializeField] private float startOrthoSize = 6f;
-
-        [Header("Pool Strategy")]
-        [Tooltip("If true, pool size is fixed to camera-visible cell capacity and runtime instantiate is disabled.")]
-        [SerializeField] private bool fixedPoolByCameraView = true;
+        [Tooltip("Aspect used to size the pool at edit time (16:9 default).")]
+        [SerializeField] private float designAspect = 16f / 9f;
 
         [Header("Debug Gizmos")]
         [SerializeField] private bool drawCameraGizmos = true;
@@ -51,17 +58,17 @@ namespace Demo.Gameplay
         private GridData _data;
         private GridMath _math;
         private GridInputReader _input;
-        private SimplePool _pool;
         private CameraController2D _camController;
-        private GameObject _selectionMarker;
 
-        private readonly Dictionary<int, GameObject> _active = new();
-        private readonly List<int> _tmpRelease = new();
+        private readonly Dictionary<int, GameObject> _active = new Dictionary<int, GameObject>();
+        private readonly List<int> _tmpRelease = new List<int>();
         private RectInt _lastVisible = new RectInt(-1, -1, 0, 0);
+
+        // ------------------------------------------------------------------ runtime
 
         private void Awake()
         {
-            BootstrapIfNeeded();
+            ResolveSceneReferences();
 
             _data = new GridData(width, height);
             _math = new GridMath(origin, cellSize);
@@ -69,25 +76,27 @@ namespace Demo.Gameplay
 
             SeedInitialContent();
 
-            if (gridRenderer != null)
-                gridRenderer.Configure(width, height, cellSize, origin);
+            gridRenderer.Configure(width, height, cellSize, origin);
 
-            if (objectRoot == null)
-                objectRoot = new GameObject("Objects").transform;
+            pool.Init();
+            if (pool.TotalCount == 0)
+            {
+                // Scene was not built in the editor: fall back to creating the pool now.
+                pool.SetPrefab(placePrefab != null ? placePrefab : CreateRuntimeFallbackPrefab());
+                pool.ConfigurePrewarm(ComputeCapacity());
+                pool.PrewarmNow();
+                Debug.LogWarning("[GridController] Pool was empty. Use the 'Build Scene Objects' button to pre-create objects in the scene.");
+            }
+            else if (pool.TotalCount < ComputeCapacity())
+            {
+                Debug.LogWarning($"[GridController] Pool has {pool.TotalCount} objects but the camera can see {ComputeCapacity()} cells. Rebuild scene objects.");
+            }
 
-            var poolObj = new GameObject("ObjectPool");
-            poolObj.transform.SetParent(objectRoot);
-            _pool = poolObj.AddComponent<SimplePool>();
-            _pool.SetPrefab(placePrefab != null ? placePrefab : CreateFallbackPrefab());
-
-            _selectionMarker = CreateSelectionMarker();
+            if (selectionMarker != null) selectionMarker.SetActive(false);
 
             var worldBounds = GetMapWorldBounds();
             _camController.SetBounds(worldBounds);
-            mainCamera.transform.position = new Vector3(worldBounds.center.x, worldBounds.center.y, -10f);
             _camController.SetZoom(startOrthoSize);
-
-            ConfigurePoolCapacityToCamera();
         }
 
         private void Start()
@@ -95,34 +104,7 @@ namespace Demo.Gameplay
             RefreshVisible(true);
         }
 
-        private void ConfigurePoolCapacityToCamera()
-        {
-            if (!fixedPoolByCameraView) return;
-
-            int capacity = ComputeVisibleCapacity();
-            // Set internal fields via config methods
-            _pool.ConfigurePrewarm(capacity);
-            _pool.PrewarmNow();
-        }
-
-        private int ComputeVisibleCapacity()
-        {
-            float halfH = mainCamera.orthographicSize;
-            float halfW = halfH * mainCamera.aspect;
-
-            float viewW = halfW * 2f;
-            float viewH = halfH * 2f;
-
-            int visibleCols = Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2;
-            int visibleRows = Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2;
-
-            visibleCols = Mathf.Clamp(visibleCols, 1, width);
-            visibleRows = Mathf.Clamp(visibleRows, 1, height);
-
-            return visibleCols * visibleRows;
-        }
-
-        private void BootstrapIfNeeded()
+        private void ResolveSceneReferences()
         {
             if (mainCamera == null)
             {
@@ -132,19 +114,31 @@ namespace Demo.Gameplay
                     var camObj = new GameObject("Main Camera");
                     mainCamera = camObj.AddComponent<Camera>();
                     camObj.tag = "MainCamera";
+                    var c = GetMapWorldBounds().center;
+                    camObj.transform.position = new Vector3(c.x, c.y, -10f);
                 }
             }
-
             mainCamera.orthographic = true;
+
             _camController = mainCamera.GetComponent<CameraController2D>();
             if (_camController == null)
                 _camController = mainCamera.gameObject.AddComponent<CameraController2D>();
 
             if (gridRenderer == null)
+                gridRenderer = new GameObject("GridRenderer").AddComponent<GridLineRenderer>();
+
+            if (objectRoot == null)
+                objectRoot = new GameObject("Objects").transform;
+
+            if (pool == null)
             {
-                var gridObj = new GameObject("GridRenderer");
-                gridRenderer = gridObj.AddComponent<GridLineRenderer>();
+                var poolObj = new GameObject("ObjectPool");
+                poolObj.transform.SetParent(objectRoot);
+                pool = poolObj.AddComponent<SimplePool>();
             }
+
+            if (selectionMarker == null)
+                selectionMarker = CreateSelectionMarkerRuntime();
         }
 
         private void SeedInitialContent()
@@ -157,27 +151,25 @@ namespace Demo.Gameplay
             }
         }
 
-        private GameObject CreateFallbackPrefab()
+        private GameObject CreateRuntimeFallbackPrefab()
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
             go.name = "CellObject_Fallback";
-            var mat = new Material(Shader.Find("Sprites/Default")) { color = new Color(1f, 0.4f, 0.1f, 0.95f) };
-            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
-            go.transform.localScale = new Vector3(0.8f * cellSize, 0.8f * cellSize, 1f);
+            go.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Sprites/Default")) { color = objectColor };
+            go.transform.localScale = new Vector3(objectScale * cellSize, objectScale * cellSize, 1f);
             var col = go.GetComponent<Collider>();
             if (col != null) Destroy(col);
             go.SetActive(false);
             return go;
         }
 
-        private GameObject CreateSelectionMarker()
+        private GameObject CreateSelectionMarkerRuntime()
         {
             var marker = GameObject.CreatePrimitive(PrimitiveType.Quad);
             marker.name = "SelectionMarker";
             marker.transform.SetParent(objectRoot);
             marker.transform.localScale = new Vector3(cellSize * 0.95f, cellSize * 0.95f, 1f);
-            var mat = new Material(Shader.Find("Sprites/Default")) { color = selectionColor };
-            marker.GetComponent<MeshRenderer>().sharedMaterial = mat;
+            marker.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Sprites/Default")) { color = selectionColor };
             var col = marker.GetComponent<Collider>();
             if (col != null) Destroy(col);
             marker.SetActive(false);
@@ -190,6 +182,29 @@ namespace Demo.Gameplay
             HandleSaveLoadShortcuts();
             RefreshVisible(false);
         }
+
+        // ------------------------------------------------------------------ capacity
+
+        private void GetCapacitySize(out int cols, out int rows)
+        {
+            float aspect = designAspect;
+            if (mainCamera != null) aspect = Mathf.Max(aspect, mainCamera.aspect);
+
+            float ortho = mainCamera != null ? mainCamera.orthographicSize : startOrthoSize;
+            float viewW = ortho * aspect * 2f;
+            float viewH = ortho * 2f;
+
+            cols = Mathf.Clamp(Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2, 1, width);
+            rows = Mathf.Clamp(Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2, 1, height);
+        }
+
+        private int ComputeCapacity()
+        {
+            GetCapacitySize(out int c, out int r);
+            return c * r;
+        }
+
+        // ------------------------------------------------------------------ culling
 
         private RectInt GetVisibleRect()
         {
@@ -227,7 +242,7 @@ namespace Demo.Gameplay
             for (int i = 0; i < _tmpRelease.Count; i++)
             {
                 int idx = _tmpRelease[i];
-                _pool.Release(_active[idx]);
+                pool.Release(_active[idx]);
                 _active.Remove(idx);
             }
 
@@ -244,7 +259,7 @@ namespace Demo.Gameplay
 
         private void SpawnVisual(int idx, int x, int y)
         {
-            var go = _pool.Get(_math.CellToWorldCenter(new Vector2Int(x, y)));
+            var go = pool.Get(_math.CellToWorldCenter(new Vector2Int(x, y)));
             if (go != null) _active[idx] = go;
         }
 
@@ -252,10 +267,12 @@ namespace Demo.Gameplay
         {
             if (_active.TryGetValue(idx, out var go))
             {
-                _pool.Release(go);
+                pool.Release(go);
                 _active.Remove(idx);
             }
         }
+
+        // ------------------------------------------------------------------ input
 
         private void HandleInput()
         {
@@ -278,9 +295,9 @@ namespace Demo.Gameplay
 
         private void MoveSelection(Vector2Int cell)
         {
-            if (_selectionMarker == null) return;
-            _selectionMarker.SetActive(true);
-            _selectionMarker.transform.position = _math.CellToWorldCenter(cell) + new Vector3(0f, 0f, -0.01f);
+            if (selectionMarker == null) return;
+            selectionMarker.SetActive(true);
+            selectionMarker.transform.position = _math.CellToWorldCenter(cell) + new Vector3(0f, 0f, -0.01f);
         }
 
         private void TogglePlace(Vector2Int cell)
@@ -337,7 +354,7 @@ namespace Demo.Gameplay
 
         private void ReleaseAllVisuals()
         {
-            foreach (var kv in _active) _pool.Release(kv.Value);
+            foreach (var kv in _active) pool.Release(kv.Value);
             _active.Clear();
         }
 
@@ -346,21 +363,21 @@ namespace Demo.Gameplay
             return new Rect(origin.x, origin.y, width * cellSize, height * cellSize);
         }
 
+        // ------------------------------------------------------------------ gizmos
+
         private void OnDrawGizmos()
         {
             if (!drawCameraGizmos) return;
 
             Gizmos.color = mapBoundsColor;
-            var map = GetMapWorldBounds();
-            DrawRect(map);
+            DrawRect(GetMapWorldBounds());
 
-            if (mainCamera == null)
-                mainCamera = Camera.main;
-            if (mainCamera == null) return;
+            var cam = mainCamera != null ? mainCamera : Camera.main;
+            if (cam == null) return;
 
-            float halfH = mainCamera.orthographicSize;
-            float halfW = halfH * mainCamera.aspect;
-            Vector3 c = mainCamera.transform.position;
+            float halfH = cam.orthographicSize;
+            float halfW = halfH * Mathf.Max(cam.aspect, 0.01f);
+            Vector3 c = cam.transform.position;
             Rect camRect = Rect.MinMaxRect(c.x - halfW, c.y - halfH, c.x + halfW, c.y + halfH);
             Gizmos.color = cameraViewColor;
             DrawRect(camRect);
@@ -377,11 +394,158 @@ namespace Demo.Gameplay
             Vector3 br = new Vector3(r.xMax, r.yMin, 0f);
             Vector3 tr = new Vector3(r.xMax, r.yMax, 0f);
             Vector3 tl = new Vector3(r.xMin, r.yMax, 0f);
-
             Gizmos.DrawLine(bl, br);
             Gizmos.DrawLine(br, tr);
             Gizmos.DrawLine(tr, tl);
             Gizmos.DrawLine(tl, bl);
         }
+
+#if UNITY_EDITOR
+        // ------------------------------------------------------------------ edit-time build
+
+        /// <summary>
+        /// Creates Camera, GridRenderer, Objects root, pre-spawned pool items and selection marker
+        /// directly in the scene so everything can be tweaked before pressing Play.
+        /// </summary>
+        [ContextMenu("Build Scene Objects")]
+        public void BuildSceneObjects()
+        {
+            Undo.IncrementCurrentGroup();
+
+            // Camera
+            if (mainCamera == null) mainCamera = Camera.main;
+            if (mainCamera == null)
+            {
+                var camObj = new GameObject("Main Camera");
+                camObj.tag = "MainCamera";
+                mainCamera = camObj.AddComponent<Camera>();
+                Undo.RegisterCreatedObjectUndo(camObj, "Create Camera");
+            }
+            mainCamera.orthographic = true;
+            mainCamera.orthographicSize = startOrthoSize;
+            Rect map = GetMapWorldBounds();
+            mainCamera.transform.position = new Vector3(map.center.x, map.center.y, -10f);
+            if (mainCamera.GetComponent<CameraController2D>() == null)
+                mainCamera.gameObject.AddComponent<CameraController2D>();
+
+            // Grid renderer
+            if (gridRenderer == null)
+            {
+                var g = new GameObject("GridRenderer");
+                Undo.RegisterCreatedObjectUndo(g, "Create GridRenderer");
+                gridRenderer = g.AddComponent<GridLineRenderer>();
+            }
+            gridRenderer.Configure(width, height, cellSize, origin);
+            EditorUtility.SetDirty(gridRenderer);
+
+            // Roots
+            if (objectRoot == null)
+            {
+                var root = new GameObject("Objects");
+                Undo.RegisterCreatedObjectUndo(root, "Create Objects root");
+                objectRoot = root.transform;
+            }
+            if (pool == null)
+            {
+                var p = new GameObject("ObjectPool");
+                Undo.RegisterCreatedObjectUndo(p, "Create ObjectPool");
+                p.transform.SetParent(objectRoot, false);
+                pool = p.AddComponent<SimplePool>();
+            }
+
+            // Clear old pool items
+            for (int i = pool.transform.childCount - 1; i >= 0; i--)
+                DestroyImmediate(pool.transform.GetChild(i).gameObject);
+
+            // Create pool items laid out over the area the camera currently sees
+            Material objMat = placePrefab == null
+                ? GetOrCreateMaterial("Assets/Materials/CellObject.mat", objectColor)
+                : null;
+
+            GetCapacitySize(out int cols, out int rows);
+            int count = cols * rows;
+            float halfH = startOrthoSize;
+            float halfW = halfH * designAspect;
+            int minX = Mathf.Clamp(Mathf.FloorToInt((map.center.x - halfW - origin.x) / cellSize) - cullPadding, 0, Mathf.Max(0, width - cols));
+            int minY = Mathf.Clamp(Mathf.FloorToInt((map.center.y - halfH - origin.y) / cellSize) - cullPadding, 0, Mathf.Max(0, height - rows));
+
+            var list = new List<GameObject>(count);
+            for (int i = 0; i < count; i++)
+            {
+                GameObject go;
+                if (placePrefab != null)
+                {
+                    go = (GameObject)PrefabUtility.InstantiatePrefab(placePrefab, pool.transform);
+                }
+                else
+                {
+                    go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    go.transform.SetParent(pool.transform, false);
+                    go.transform.localScale = new Vector3(objectScale * cellSize, objectScale * cellSize, 1f);
+                    go.GetComponent<MeshRenderer>().sharedMaterial = objMat;
+                    var col = go.GetComponent<Collider>();
+                    if (col != null) DestroyImmediate(col);
+                }
+
+                go.name = "Cell_" + i.ToString("000");
+                var cell = new Vector2Int(minX + i % cols, minY + i / cols);
+                go.transform.position = _mathForBuild().CellToWorldCenter(cell);
+                go.SetActive(true); // visible in the Scene view for tuning; hidden automatically on Play
+                list.Add(go);
+            }
+            pool.SetItems(list);
+            EditorUtility.SetDirty(pool);
+
+            // Selection marker
+            if (selectionMarker == null)
+            {
+                var m = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                m.name = "SelectionMarker";
+                m.transform.SetParent(objectRoot, false);
+                m.transform.localScale = new Vector3(cellSize * 0.95f, cellSize * 0.95f, 1f);
+                m.GetComponent<MeshRenderer>().sharedMaterial = GetOrCreateMaterial("Assets/Materials/SelectionMarker.mat", selectionColor);
+                var col = m.GetComponent<Collider>();
+                if (col != null) DestroyImmediate(col);
+                m.SetActive(false);
+                selectionMarker = m;
+            }
+
+            EditorUtility.SetDirty(this);
+            EditorUtility.SetDirty(mainCamera);
+            EditorSceneManager.MarkSceneDirty(gameObject.scene);
+            Debug.Log($"[GridController] Built {count} pool objects ({cols}x{rows}) in the scene. Save the scene (Ctrl+S).");
+        }
+
+        [ContextMenu("Clear Scene Objects")]
+        public void ClearSceneObjects()
+        {
+            if (pool != null)
+            {
+                for (int i = pool.transform.childCount - 1; i >= 0; i--)
+                    DestroyImmediate(pool.transform.GetChild(i).gameObject);
+                pool.SetItems(new List<GameObject>());
+                EditorUtility.SetDirty(pool);
+            }
+            EditorSceneManager.MarkSceneDirty(gameObject.scene);
+        }
+
+        private GridMath _mathForBuild() => new GridMath(origin, cellSize);
+
+        private static Material GetOrCreateMaterial(string path, Color color)
+        {
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (mat == null)
+            {
+                if (!AssetDatabase.IsValidFolder("Assets/Materials"))
+                    AssetDatabase.CreateFolder("Assets", "Materials");
+                mat = new Material(Shader.Find("Sprites/Default"));
+                AssetDatabase.CreateAsset(mat, path);
+            }
+            mat.color = color;
+            EditorUtility.SetDirty(mat);
+            AssetDatabase.SaveAssets();
+            return mat;
+        }
+#endif
     }
 }

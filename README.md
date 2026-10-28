@@ -4,22 +4,25 @@ Unity version: **6000.3.20f1** · Uses the **new Input System** package.
 
 Repo: https://github.com/Viet020603/demo
 
+## Quick start (objects are created in the scene, not at runtime)
+1. Open the project, open `Assets/Scenes/GameScene.unity`.
+2. Menu **Tools > Grid Demo > Build Scene Objects**
+   (or select `GameBootstrap` and click **Build Scene Objects** in the inspector).
+3. The Hierarchy now contains `Main Camera`, `GridRenderer`, `Objects/ObjectPool/Cell_000...` and `SelectionMarker`.
+   Everything is visible in the Scene view, so you can adjust size, color, position, zoom, padding, etc. before Play.
+4. Save the scene (Ctrl+S) and press Play.
+
+On Play the pool objects are hidden and reused: only cells inside the camera view are shown, and they are recycled when the camera pans. Nothing is instantiated at runtime.
+
+Re-press **Build Scene Objects** after changing grid size, cell size, zoom or padding so the pool capacity matches the camera view.
+
 ## Features
 - 31x31 data-driven grid (no 961 per-cell GameObjects)
 - Drag to pan the camera (left or middle mouse), clamped to the map
-- Viewport culling: only objects inside camera view are active
-- Objects are shown automatically from grid data; initial content is seeded
+- Viewport culling with a fixed, pre-built pool
 - Every cell is clickable via mouse -> cell math (no colliders)
 - Selection marker, save/load/clear
-- Debug Gizmos:
-  - Red = map bounds
-  - Cyan = camera view rect
-  - Yellow = culling influence rect (camera + padding)
-
-## Pool behavior (updated)
-- Fixed pool capacity can be matched to camera-visible cell capacity.
-- When camera moves, cells leaving view are released to pool; new visible cells reuse those pooled objects.
-- Runtime instantiate can be disabled for strict fixed-capacity behavior.
+- Gizmos: red = map, cyan = camera view, yellow = culling area
 
 ## Controls
 - Left drag / middle drag: move camera
@@ -28,7 +31,6 @@ Repo: https://github.com/Viet020603/demo
 - Mouse wheel: zoom
 - `S` save, `L` load, `C` clear
 
-## Setup
-Open with Unity 6000.3.20f1, open `Assets/Scenes/GameScene.unity`, press Play.
-
-If you see *"You are trying to read Input using the UnityEngine.Input class"*, this version already fixed it by using `UnityEngine.InputSystem` (`Mouse.current`, `Keyboard.current`). Make sure **Project Settings > Player > Active Input Handling** is `Input System Package (New)` or `Both`.
+## Notes
+- Set **Project Settings > Player > Active Input Handling** to `Input System Package (New)` or `Both`.
+- Optional: assign `placePrefab` on `GridController` to use your own sprite/prefab for pool items.
