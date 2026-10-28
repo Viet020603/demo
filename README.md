@@ -4,22 +4,20 @@ Unity version: **6000.3.20f1** · Uses the **new Input System** package.
 
 Repo: https://github.com/Viet020603/demo
 
-## Quick start (objects are created in the scene, not at runtime)
-1. Open the project, open `Assets/Scenes/GameScene.unity`.
-2. Menu **Tools > Grid Demo > Build Scene Objects**
-   (or select `GameBootstrap` and click **Build Scene Objects** in the inspector).
-3. The Hierarchy now contains `Main Camera`, `GridRenderer`, `Objects/ObjectPool/Cell_000...` and `SelectionMarker`.
-   Everything is visible in the Scene view, so you can adjust size, color, position, zoom, padding, etc. before Play.
-4. Save the scene (Ctrl+S) and press Play.
+## How objects are spawned
+On Play, `GridController` **checks the real camera size** (`orthographicSize` and `aspect`), computes how many cells the camera can see (+ `cullPadding`) and creates **only that many objects** (just the missing ones if some already exist in the scene). Nothing else is instantiated.
 
-On Play the pool objects are hidden and reused: only cells inside the camera view are shown, and they are recycled when the camera pans. Nothing is instantiated at runtime.
+- While you pan the camera, objects leaving the view are returned to the pool and reused for cells entering the view.
+- If you zoom out / the window aspect changes, the capacity is re-checked and the pool grows only when needed (it never shrinks, so it is reused).
+- The console logs e.g. `Camera size=6, aspect=1.78 -> needs 168 objects. Created 168, pool total 168.`
 
-Re-press **Build Scene Objects** after changing grid size, cell size, zoom or padding so the pool capacity matches the camera view.
+## Optional: preview objects in the editor
+Menu **Tools > Grid Demo > Build Scene Objects** (or the button on `GameBootstrap`) pre-creates camera, grid, pool objects and selection marker in the scene so you can tweak them before Play. At runtime the camera is still checked and any missing objects are created automatically.
 
 ## Features
 - 31x31 data-driven grid (no 961 per-cell GameObjects)
 - Drag to pan the camera (left or middle mouse), clamped to the map
-- Viewport culling with a fixed, pre-built pool
+- Camera-size based pool + viewport culling
 - Every cell is clickable via mouse -> cell math (no colliders)
 - Selection marker, save/load/clear
 - Gizmos: red = map, cyan = camera view, yellow = culling area

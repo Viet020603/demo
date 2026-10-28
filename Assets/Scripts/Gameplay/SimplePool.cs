@@ -4,15 +4,13 @@ using UnityEngine;
 namespace Demo.Gameplay
 {
     /// <summary>
-    /// Pool of pre-created objects. Items can be created in the scene at edit time
-    /// (see GridController > Build Scene Objects) so they can be tweaked before pressing Play.
+    /// Pool of reusable objects. Objects may be pre-created in the scene (edit time);
+    /// at runtime EnsureCapacity() creates only the missing amount, based on the camera size.
     /// </summary>
     public class SimplePool : MonoBehaviour
     {
         [SerializeField] private GameObject prefab;
         [SerializeField] private List<GameObject> items = new List<GameObject>();
-        [SerializeField] private int prewarm = 16;
-        [SerializeField] private bool allowRuntimeInstantiate = false;
 
         private readonly Stack<GameObject> _free = new Stack<GameObject>();
         private bool _init;
@@ -22,7 +20,6 @@ namespace Demo.Gameplay
         public IReadOnlyList<GameObject> Items => items;
 
         public void SetPrefab(GameObject value) => prefab = value;
-        public void ConfigurePrewarm(int count) => prewarm = Mathf.Max(0, count);
 
         public void SetItems(List<GameObject> list)
         {
@@ -30,7 +27,7 @@ namespace Demo.Gameplay
             _init = false;
         }
 
-        /// <summary>Collects scene-placed items into the free stack (all hidden). Safe to call many times.</summary>
+        /// <summary>Collects scene-placed items into the free stack (all hidden).</summary>
         public void Init()
         {
             if (_init) return;
@@ -45,43 +42,37 @@ namespace Demo.Gameplay
             }
         }
 
-        /// <summary>Runtime fallback: create items only if the scene did not provide enough.</summary>
-        public void PrewarmNow()
+        /// <summary>
+        /// Makes sure the pool owns at least 'count' objects. Only the missing ones are created.
+        /// Returns number of newly created objects.
+        /// </summary>
+        public int EnsureCapacity(int count)
         {
             Init();
-            if (prefab == null) return;
-            while (items.Count < prewarm)
+
+            GameObject template = prefab;
+            if (template == null && items.Count > 0) template = items[0];
+            if (template == null) return 0;
+
+            int created = 0;
+            while (items.Count < count)
             {
-                var go = Instantiate(prefab, transform);
+                var go = Instantiate(template, transform);
+                go.name = "Cell_" + items.Count.ToString("000");
                 go.SetActive(false);
                 items.Add(go);
                 _free.Push(go);
+                created++;
             }
-        }
-
-        private void Awake()
-        {
-            Init();
+            return created;
         }
 
         public GameObject Get(Vector3 position)
         {
             Init();
-            GameObject go;
-            if (_free.Count > 0)
-            {
-                go = _free.Pop();
-            }
-            else if (allowRuntimeInstantiate && prefab != null)
-            {
-                go = Instantiate(prefab, transform);
-                items.Add(go);
-            }
-            else
-            {
-                return null; // pool exhausted: never instantiate at runtime
-            }
+            if (_free.Count == 0) return null; // capacity is sized from the camera, so this should not happen
 
+            var go = _free.Pop();
             go.transform.position = position;
             go.SetActive(true);
             return go;

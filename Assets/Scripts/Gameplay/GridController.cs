@@ -26,7 +26,7 @@ namespace Demo.Gameplay
         [SerializeField, Range(0f, 1f)] private float initialFillRate = 0.3f;
         [SerializeField] private int randomSeed = 12345;
 
-        [Header("Scene References (created by 'Build Scene Objects')")]
+        [Header("Scene References (optional, created by 'Build Scene Objects')")]
         [SerializeField] private Camera mainCamera;
         [SerializeField] private GridLineRenderer gridRenderer;
         [SerializeField] private Transform objectRoot;
@@ -44,7 +44,7 @@ namespace Demo.Gameplay
         [Tooltip("Extra cells around the camera view that are kept alive to avoid pop-in.")]
         [SerializeField] private int cullPadding = 1;
         [SerializeField] private float startOrthoSize = 6f;
-        [Tooltip("Aspect used to size the pool at edit time (16:9 default).")]
+        [Tooltip("Only used by 'Build Scene Objects' (edit time preview).")]
         [SerializeField] private float designAspect = 16f / 9f;
 
         [Header("Debug Gizmos")]
@@ -64,6 +64,10 @@ namespace Demo.Gameplay
         private readonly List<int> _tmpRelease = new List<int>();
         private RectInt _lastVisible = new RectInt(-1, -1, 0, 0);
 
+        // camera signature used to detect zoom / resolution changes at runtime
+        private float _lastOrtho = -1f;
+        private float _lastAspect = -1f;
+
         // ------------------------------------------------------------------ runtime
 
         private void Awake()
@@ -75,28 +79,15 @@ namespace Demo.Gameplay
             _input = new GridInputReader(mainCamera, _math, width, height);
 
             SeedInitialContent();
-
             gridRenderer.Configure(width, height, cellSize, origin);
-
-            pool.Init();
-            if (pool.TotalCount == 0)
-            {
-                // Scene was not built in the editor: fall back to creating the pool now.
-                pool.SetPrefab(placePrefab != null ? placePrefab : CreateRuntimeFallbackPrefab());
-                pool.ConfigurePrewarm(ComputeCapacity());
-                pool.PrewarmNow();
-                Debug.LogWarning("[GridController] Pool was empty. Use the 'Build Scene Objects' button to pre-create objects in the scene.");
-            }
-            else if (pool.TotalCount < ComputeCapacity())
-            {
-                Debug.LogWarning($"[GridController] Pool has {pool.TotalCount} objects but the camera can see {ComputeCapacity()} cells. Rebuild scene objects.");
-            }
 
             if (selectionMarker != null) selectionMarker.SetActive(false);
 
-            var worldBounds = GetMapWorldBounds();
-            _camController.SetBounds(worldBounds);
+            _camController.SetBounds(GetMapWorldBounds());
             _camController.SetZoom(startOrthoSize);
+
+            pool.Init();
+            EnsurePoolForCamera(); // <-- check the camera size, then create only the needed amount
         }
 
         private void Start()
@@ -154,11 +145,12 @@ namespace Demo.Gameplay
         private GameObject CreateRuntimeFallbackPrefab()
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            go.name = "CellObject_Fallback";
+            go.name = "CellObject_Template";
             go.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Sprites/Default")) { color = objectColor };
             go.transform.localScale = new Vector3(objectScale * cellSize, objectScale * cellSize, 1f);
             var col = go.GetComponent<Collider>();
             if (col != null) Destroy(col);
+            go.transform.SetParent(pool.transform, false);
             go.SetActive(false);
             return go;
         }
@@ -180,28 +172,52 @@ namespace Demo.Gameplay
         {
             HandleInput();
             HandleSaveLoadShortcuts();
+
+            // If the camera zoom / aspect changed, re-check how many objects are needed.
+            if (!Mathf.Approximately(_lastOrtho, mainCamera.orthographicSize) ||
+                !Mathf.Approximately(_lastAspect, mainCamera.aspect))
+            {
+                EnsurePoolForCamera();
+                _lastVisible = new RectInt(-1, -1, 0, 0); // force a refresh
+            }
+
             RefreshVisible(false);
         }
 
-        // ------------------------------------------------------------------ capacity
+        // ------------------------------------------------------------------ capacity from camera
 
-        private void GetCapacitySize(out int cols, out int rows)
+        /// <summary>Number of cells the camera can see right now (+ padding), based on the real camera size.</summary>
+        private int ComputeCapacityFromCamera()
         {
-            float aspect = designAspect;
-            if (mainCamera != null) aspect = Mathf.Max(aspect, mainCamera.aspect);
+            float ortho = mainCamera.orthographicSize;
+            float aspect = mainCamera.aspect;
+            return CapacityFor(ortho, aspect);
+        }
 
-            float ortho = mainCamera != null ? mainCamera.orthographicSize : startOrthoSize;
+        private int CapacityFor(float ortho, float aspect)
+        {
             float viewW = ortho * aspect * 2f;
             float viewH = ortho * 2f;
 
-            cols = Mathf.Clamp(Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2, 1, width);
-            rows = Mathf.Clamp(Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2, 1, height);
+            int cols = Mathf.Clamp(Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2, 1, width);
+            int rows = Mathf.Clamp(Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2, 1, height);
+            return cols * rows;
         }
 
-        private int ComputeCapacity()
+        private void EnsurePoolForCamera()
         {
-            GetCapacitySize(out int c, out int r);
-            return c * r;
+            _lastOrtho = mainCamera.orthographicSize;
+            _lastAspect = mainCamera.aspect;
+
+            int needed = ComputeCapacityFromCamera();
+            if (pool.TotalCount >= needed) return; // enough objects already (scene-built or created earlier)
+
+            // Need a template if the scene has no items and no prefab was assigned.
+            if (pool.TotalCount == 0)
+                pool.SetPrefab(placePrefab != null ? placePrefab : CreateRuntimeFallbackPrefab());
+
+            int created = pool.EnsureCapacity(needed);
+            Debug.Log($"[GridController] Camera size={_lastOrtho:0.##}, aspect={_lastAspect:0.##} -> needs {needed} objects. Created {created}, pool total {pool.TotalCount}.");
         }
 
         // ------------------------------------------------------------------ culling
@@ -231,6 +247,7 @@ namespace Demo.Gameplay
             if (!force && r.Equals(_lastVisible)) return;
             _lastVisible = r;
 
+            // return objects that left the view to the pool
             _tmpRelease.Clear();
             foreach (var kv in _active)
             {
@@ -246,6 +263,7 @@ namespace Demo.Gameplay
                 _active.Remove(idx);
             }
 
+            // reuse pooled objects for cells that entered the view
             for (int y = r.yMin; y < r.yMax; y++)
             {
                 for (int x = r.xMin; x < r.xMax; x++)
@@ -401,18 +419,16 @@ namespace Demo.Gameplay
         }
 
 #if UNITY_EDITOR
-        // ------------------------------------------------------------------ edit-time build
+        // ------------------------------------------------------------------ edit-time preview (optional)
 
         /// <summary>
-        /// Creates Camera, GridRenderer, Objects root, pre-spawned pool items and selection marker
-        /// directly in the scene so everything can be tweaked before pressing Play.
+        /// OPTIONAL: pre-creates Camera, GridRenderer, pool objects and selection marker in the scene
+        /// so they can be tweaked before Play. At runtime the camera size is still checked and
+        /// any missing objects are created automatically.
         /// </summary>
         [ContextMenu("Build Scene Objects")]
         public void BuildSceneObjects()
         {
-            Undo.IncrementCurrentGroup();
-
-            // Camera
             if (mainCamera == null) mainCamera = Camera.main;
             if (mainCamera == null)
             {
@@ -428,7 +444,6 @@ namespace Demo.Gameplay
             if (mainCamera.GetComponent<CameraController2D>() == null)
                 mainCamera.gameObject.AddComponent<CameraController2D>();
 
-            // Grid renderer
             if (gridRenderer == null)
             {
                 var g = new GameObject("GridRenderer");
@@ -438,7 +453,6 @@ namespace Demo.Gameplay
             gridRenderer.Configure(width, height, cellSize, origin);
             EditorUtility.SetDirty(gridRenderer);
 
-            // Roots
             if (objectRoot == null)
             {
                 var root = new GameObject("Objects");
@@ -453,22 +467,23 @@ namespace Demo.Gameplay
                 pool = p.AddComponent<SimplePool>();
             }
 
-            // Clear old pool items
             for (int i = pool.transform.childCount - 1; i >= 0; i--)
                 DestroyImmediate(pool.transform.GetChild(i).gameObject);
 
-            // Create pool items laid out over the area the camera currently sees
             Material objMat = placePrefab == null
                 ? GetOrCreateMaterial("Assets/Materials/CellObject.mat", objectColor)
                 : null;
 
-            GetCapacitySize(out int cols, out int rows);
-            int count = cols * rows;
-            float halfH = startOrthoSize;
-            float halfW = halfH * designAspect;
-            int minX = Mathf.Clamp(Mathf.FloorToInt((map.center.x - halfW - origin.x) / cellSize) - cullPadding, 0, Mathf.Max(0, width - cols));
-            int minY = Mathf.Clamp(Mathf.FloorToInt((map.center.y - halfH - origin.y) / cellSize) - cullPadding, 0, Mathf.Max(0, height - rows));
+            float aspect = Mathf.Max(designAspect, mainCamera.aspect);
+            int count = CapacityFor(startOrthoSize, aspect);
+            float viewW = startOrthoSize * aspect * 2f;
+            float viewH = startOrthoSize * 2f;
+            int cols = Mathf.Clamp(Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2, 1, width);
+            int rows = Mathf.Clamp(Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2, 1, height);
+            int minX = Mathf.Clamp(Mathf.FloorToInt((map.center.x - viewW * 0.5f - origin.x) / cellSize) - cullPadding, 0, Mathf.Max(0, width - cols));
+            int minY = Mathf.Clamp(Mathf.FloorToInt((map.center.y - viewH * 0.5f - origin.y) / cellSize) - cullPadding, 0, Mathf.Max(0, height - rows));
 
+            var math = new GridMath(origin, cellSize);
             var list = new List<GameObject>(count);
             for (int i = 0; i < count; i++)
             {
@@ -488,15 +503,13 @@ namespace Demo.Gameplay
                 }
 
                 go.name = "Cell_" + i.ToString("000");
-                var cell = new Vector2Int(minX + i % cols, minY + i / cols);
-                go.transform.position = _mathForBuild().CellToWorldCenter(cell);
-                go.SetActive(true); // visible in the Scene view for tuning; hidden automatically on Play
+                go.transform.position = math.CellToWorldCenter(new Vector2Int(minX + i % cols, minY + i / cols));
+                go.SetActive(true);
                 list.Add(go);
             }
             pool.SetItems(list);
             EditorUtility.SetDirty(pool);
 
-            // Selection marker
             if (selectionMarker == null)
             {
                 var m = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -513,7 +526,7 @@ namespace Demo.Gameplay
             EditorUtility.SetDirty(this);
             EditorUtility.SetDirty(mainCamera);
             EditorSceneManager.MarkSceneDirty(gameObject.scene);
-            Debug.Log($"[GridController] Built {count} pool objects ({cols}x{rows}) in the scene. Save the scene (Ctrl+S).");
+            Debug.Log($"[GridController] Built {count} preview pool objects in the scene. Save the scene (Ctrl+S).");
         }
 
         [ContextMenu("Clear Scene Objects")]
@@ -528,8 +541,6 @@ namespace Demo.Gameplay
             }
             EditorSceneManager.MarkSceneDirty(gameObject.scene);
         }
-
-        private GridMath _mathForBuild() => new GridMath(origin, cellSize);
 
         private static Material GetOrCreateMaterial(string path, Color color)
         {
