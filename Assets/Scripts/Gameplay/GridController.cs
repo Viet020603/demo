@@ -6,7 +6,6 @@ using Demo.CameraControl;
 using Demo.Grid;
 using Demo.Rendering;
 using Demo.InputSystem;
-using Demo.SaveLoad;
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -14,57 +13,74 @@ using UnityEditor.SceneManagement;
 
 namespace Demo.Gameplay
 {
+    /// <summary>
+    /// Builds the map from o_ban_do.json. Every cell has an id; each visible cell is a prefab
+    /// instance (CellView) bound to that id. Clicking a cell logs its id.
+    /// Only cells inside the camera view get an instance (pooled and reused while panning).
+    /// </summary>
     public class GridController : MonoBehaviour
     {
-        [Header("Grid")]
+        [Header("Map data (o_ban_do.json)")]
+        [Tooltip("Drag the JSON here, or leave empty and put o_ban_do.json in Assets/Resources/.")]
+        [SerializeField] private TextAsset mapFile;
+        [SerializeField] private string resourceName = "o_ban_do";
+
+        [Header("Grid (auto-detected from the JSON when loaded)")]
         [SerializeField] private int width = 31;
         [SerializeField] private int height = 31;
         [SerializeField] private float cellSize = 1f;
         [SerializeField] private Vector2 origin = Vector2.zero;
 
-        [Header("Initial content")]
-        [SerializeField, Range(0f, 1f)] private float initialFillRate = 0.3f;
-        [SerializeField] private int randomSeed = 12345;
-
-        [Header("Scene References (optional, created by 'Build Scene Objects')")]
+        [Header("Scene References (optional)")]
         [SerializeField] private Camera mainCamera;
         [SerializeField] private GridLineRenderer gridRenderer;
         [SerializeField] private Transform objectRoot;
         [SerializeField] private SimplePool pool;
         [SerializeField] private GameObject selectionMarker;
-        [Tooltip("Optional. If empty, a quad with an auto-created material is used.")]
+        [Tooltip("Cell prefab. If it has no CellView one is added. Empty = auto-created quad.")]
         [SerializeField] private GameObject placePrefab;
 
         [Header("Visual")]
-        [SerializeField] private Color selectionColor = new Color(0.2f, 0.7f, 1f, 0.35f);
-        [SerializeField] private Color objectColor = new Color(1f, 0.4f, 0.1f, 0.95f);
-        [SerializeField, Range(0.1f, 1f)] private float objectScale = 0.8f;
+        [SerializeField] private Color selectionColor = new Color(1f, 1f, 1f, 0.45f);
+        [SerializeField, Range(0.1f, 1f)] private float objectScale = 0.95f;
+        [Tooltip("Color per maLoai (index = maLoai).")]
+        [SerializeField] private Color[] typeColors = new Color[]
+        {
+            new Color(0.5f, 0.5f, 0.5f),   // 0
+            new Color(1.0f, 0.2f, 0.2f),   // 1
+            new Color(1.0f, 0.6f, 0.2f),   // 2
+            new Color(1.0f, 0.9f, 0.3f),   // 3
+            new Color(0.4f, 0.8f, 0.4f),   // 4
+            new Color(0.3f, 0.6f, 1.0f),   // 5
+            new Color(0.6f, 0.4f, 0.9f),   // 6
+            new Color(0.9f, 0.4f, 0.7f),   // 7
+            new Color(0.2f, 0.9f, 0.9f),   // 8
+        };
 
         [Header("Culling / Pool")]
-        [Tooltip("Extra cells around the camera view that are kept alive to avoid pop-in.")]
         [SerializeField] private int cullPadding = 1;
         [SerializeField] private float startOrthoSize = 6f;
-        [Tooltip("Only used by 'Build Scene Objects' (edit time preview).")]
         [SerializeField] private float designAspect = 16f / 9f;
 
-        [Header("Debug Gizmos")]
+        [Header("Debug")]
+        [SerializeField] private bool logClicks = true;
         [SerializeField] private bool drawCameraGizmos = true;
         [SerializeField] private Color cameraViewColor = new Color(0f, 1f, 1f, 0.9f);
         [SerializeField] private Color cullViewColor = new Color(1f, 0.85f, 0f, 0.9f);
         [SerializeField] private Color mapBoundsColor = new Color(1f, 0f, 0f, 0.9f);
 
-        public event Action<Vector2Int> CellClicked;
+        /// <summary>Raised with the clicked cell's id.</summary>
+        public event Action<int> CellIdClicked;
 
         private GridData _data;
         private GridMath _math;
         private GridInputReader _input;
         private CameraController2D _camController;
 
+        private int[] _idByIndex;   // grid index -> id (0 = no cell in json)
         private readonly Dictionary<int, GameObject> _active = new Dictionary<int, GameObject>();
         private readonly List<int> _tmpRelease = new List<int>();
         private RectInt _lastVisible = new RectInt(-1, -1, 0, 0);
-
-        // camera signature used to detect zoom / resolution changes at runtime
         private float _lastOrtho = -1f;
         private float _lastAspect = -1f;
 
@@ -72,27 +88,70 @@ namespace Demo.Gameplay
 
         private void Awake()
         {
+            LoadMap();
             ResolveSceneReferences();
 
-            _data = new GridData(width, height);
             _math = new GridMath(origin, cellSize);
             _input = new GridInputReader(mainCamera, _math, width, height);
-
-            SeedInitialContent();
             gridRenderer.Configure(width, height, cellSize, origin);
 
             if (selectionMarker != null) selectionMarker.SetActive(false);
 
-            _camController.SetBounds(GetMapWorldBounds());
+            var bounds = GetMapWorldBounds();
+            _camController.SetBounds(bounds);
+            mainCamera.transform.position = new Vector3(bounds.center.x, bounds.center.y, -10f);
             _camController.SetZoom(startOrthoSize);
 
             pool.Init();
-            EnsurePoolForCamera(); // <-- check the camera size, then create only the needed amount
+            EnsurePoolForCamera();
         }
 
         private void Start()
         {
             RefreshVisible(true);
+        }
+
+        private void LoadMap()
+        {
+            TextAsset asset = mapFile != null ? mapFile : Resources.Load<TextAsset>(resourceName);
+            if (asset == null)
+            {
+                Debug.LogError($"[GridController] Map json not found. Put '{resourceName}.json' in Assets/Resources/ or assign it to 'Map File'.");
+                _data = new GridData(width, height);
+                _idByIndex = new int[width * height];
+                return;
+            }
+
+            var cells = MapJsonLoader.Parse(asset.text);
+
+            int maxX = 1, maxY = 1;
+            foreach (var c in cells)
+            {
+                if (c.cx > maxX) maxX = c.cx;
+                if (c.cy > maxY) maxY = c.cy;
+            }
+            width = maxX;
+            height = maxY;
+
+            _data = new GridData(width, height);
+            _idByIndex = new int[width * height];
+
+            foreach (var c in cells)
+            {
+                int x = c.cx - 1;   // json is 1-based
+                int y = c.cy - 1;
+                if (!_data.InBounds(x, y))
+                {
+                    Debug.LogWarning($"[GridController] Cell id {c.id} out of range ({c.cx},{c.cy}).");
+                    continue;
+                }
+                int idx = _data.IndexOf(x, y);
+                _idByIndex[idx] = c.id;
+                _data.cells[idx].objectId = c.id;
+                _data.cells[idx].terrainType = (byte)Mathf.Clamp(c.maLoai, 0, 255);
+            }
+
+            Debug.Log($"[GridController] Loaded {cells.Length} cells from json ({width}x{height}).");
         }
 
         private void ResolveSceneReferences()
@@ -105,8 +164,6 @@ namespace Demo.Gameplay
                     var camObj = new GameObject("Main Camera");
                     mainCamera = camObj.AddComponent<Camera>();
                     camObj.tag = "MainCamera";
-                    var c = GetMapWorldBounds().center;
-                    camObj.transform.position = new Vector3(c.x, c.y, -10f);
                 }
             }
             mainCamera.orthographic = true;
@@ -132,24 +189,15 @@ namespace Demo.Gameplay
                 selectionMarker = CreateSelectionMarkerRuntime();
         }
 
-        private void SeedInitialContent()
-        {
-            var rng = new System.Random(randomSeed);
-            for (int i = 0; i < _data.cells.Length; i++)
-            {
-                if (rng.NextDouble() < initialFillRate)
-                    _data.cells[i].objectId = 1;
-            }
-        }
-
-        private GameObject CreateRuntimeFallbackPrefab()
+        private GameObject CreateCellTemplate()
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            go.name = "CellObject_Template";
-            go.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Sprites/Default")) { color = objectColor };
+            go.name = "CellTemplate";
+            go.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Sprites/Default"));
             go.transform.localScale = new Vector3(objectScale * cellSize, objectScale * cellSize, 1f);
             var col = go.GetComponent<Collider>();
             if (col != null) Destroy(col);
+            go.AddComponent<CellView>();
             go.transform.SetParent(pool.transform, false);
             go.SetActive(false);
             return go;
@@ -160,7 +208,7 @@ namespace Demo.Gameplay
             var marker = GameObject.CreatePrimitive(PrimitiveType.Quad);
             marker.name = "SelectionMarker";
             marker.transform.SetParent(objectRoot);
-            marker.transform.localScale = new Vector3(cellSize * 0.95f, cellSize * 0.95f, 1f);
+            marker.transform.localScale = new Vector3(cellSize, cellSize, 1f);
             marker.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Sprites/Default")) { color = selectionColor };
             var col = marker.GetComponent<Collider>();
             if (col != null) Destroy(col);
@@ -171,34 +219,23 @@ namespace Demo.Gameplay
         private void Update()
         {
             HandleInput();
-            HandleSaveLoadShortcuts();
 
-            // If the camera zoom / aspect changed, re-check how many objects are needed.
             if (!Mathf.Approximately(_lastOrtho, mainCamera.orthographicSize) ||
                 !Mathf.Approximately(_lastAspect, mainCamera.aspect))
             {
                 EnsurePoolForCamera();
-                _lastVisible = new RectInt(-1, -1, 0, 0); // force a refresh
+                _lastVisible = new RectInt(-1, -1, 0, 0);
             }
 
             RefreshVisible(false);
         }
 
-        // ------------------------------------------------------------------ capacity from camera
-
-        /// <summary>Number of cells the camera can see right now (+ padding), based on the real camera size.</summary>
-        private int ComputeCapacityFromCamera()
-        {
-            float ortho = mainCamera.orthographicSize;
-            float aspect = mainCamera.aspect;
-            return CapacityFor(ortho, aspect);
-        }
+        // ------------------------------------------------------------------ pool size from camera
 
         private int CapacityFor(float ortho, float aspect)
         {
             float viewW = ortho * aspect * 2f;
             float viewH = ortho * 2f;
-
             int cols = Mathf.Clamp(Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2, 1, width);
             int rows = Mathf.Clamp(Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2, 1, height);
             return cols * rows;
@@ -209,15 +246,14 @@ namespace Demo.Gameplay
             _lastOrtho = mainCamera.orthographicSize;
             _lastAspect = mainCamera.aspect;
 
-            int needed = ComputeCapacityFromCamera();
-            if (pool.TotalCount >= needed) return; // enough objects already (scene-built or created earlier)
+            int needed = CapacityFor(_lastOrtho, _lastAspect);
+            if (pool.TotalCount >= needed) return;
 
-            // Need a template if the scene has no items and no prefab was assigned.
             if (pool.TotalCount == 0)
-                pool.SetPrefab(placePrefab != null ? placePrefab : CreateRuntimeFallbackPrefab());
+                pool.SetPrefab(placePrefab != null ? placePrefab : CreateCellTemplate());
 
             int created = pool.EnsureCapacity(needed);
-            Debug.Log($"[GridController] Camera size={_lastOrtho:0.##}, aspect={_lastAspect:0.##} -> needs {needed} objects. Created {created}, pool total {pool.TotalCount}.");
+            Debug.Log($"[GridController] Camera size={_lastOrtho:0.##}, aspect={_lastAspect:0.##} -> {needed} cells needed. Created {created}, pool total {pool.TotalCount}.");
         }
 
         // ------------------------------------------------------------------ culling
@@ -228,15 +264,10 @@ namespace Demo.Gameplay
             float halfW = halfH * mainCamera.aspect;
             Vector3 c = mainCamera.transform.position;
 
-            int minX = Mathf.FloorToInt((c.x - halfW - origin.x) / cellSize) - cullPadding;
-            int maxX = Mathf.FloorToInt((c.x + halfW - origin.x) / cellSize) + cullPadding;
-            int minY = Mathf.FloorToInt((c.y - halfH - origin.y) / cellSize) - cullPadding;
-            int maxY = Mathf.FloorToInt((c.y + halfH - origin.y) / cellSize) + cullPadding;
-
-            minX = Mathf.Clamp(minX, 0, width - 1);
-            maxX = Mathf.Clamp(maxX, 0, width - 1);
-            minY = Mathf.Clamp(minY, 0, height - 1);
-            maxY = Mathf.Clamp(maxY, 0, height - 1);
+            int minX = Mathf.Clamp(Mathf.FloorToInt((c.x - halfW - origin.x) / cellSize) - cullPadding, 0, width - 1);
+            int maxX = Mathf.Clamp(Mathf.FloorToInt((c.x + halfW - origin.x) / cellSize) + cullPadding, 0, width - 1);
+            int minY = Mathf.Clamp(Mathf.FloorToInt((c.y - halfH - origin.y) / cellSize) - cullPadding, 0, height - 1);
+            int maxY = Mathf.Clamp(Mathf.FloorToInt((c.y + halfH - origin.y) / cellSize) + cullPadding, 0, height - 1);
 
             return new RectInt(minX, minY, maxX - minX + 1, maxY - minY + 1);
         }
@@ -247,7 +278,7 @@ namespace Demo.Gameplay
             if (!force && r.Equals(_lastVisible)) return;
             _lastVisible = r;
 
-            // return objects that left the view to the pool
+            // release cells that left the view
             _tmpRelease.Clear();
             foreach (var kv in _active)
             {
@@ -263,31 +294,35 @@ namespace Demo.Gameplay
                 _active.Remove(idx);
             }
 
-            // reuse pooled objects for cells that entered the view
+            // reuse pooled prefabs for cells that entered the view and bind their id
             for (int y = r.yMin; y < r.yMax; y++)
             {
                 for (int x = r.xMin; x < r.xMax; x++)
                 {
                     int idx = _data.IndexOf(x, y);
-                    if (_data.cells[idx].objectId != 0 && !_active.ContainsKey(idx))
-                        SpawnVisual(idx, x, y);
+                    if (_idByIndex[idx] != 0 && !_active.ContainsKey(idx))
+                        ShowCell(idx, x, y);
                 }
             }
         }
 
-        private void SpawnVisual(int idx, int x, int y)
+        private void ShowCell(int idx, int x, int y)
         {
             var go = pool.Get(_math.CellToWorldCenter(new Vector2Int(x, y)));
-            if (go != null) _active[idx] = go;
+            if (go == null) return;
+
+            var view = go.GetComponent<CellView>();
+            if (view == null) view = go.AddComponent<CellView>();
+
+            int maLoai = _data.cells[idx].terrainType;
+            view.Bind(_idByIndex[idx], maLoai, x + 1, y + 1, ColorFor(maLoai));
+            _active[idx] = go;
         }
 
-        private void DespawnVisual(int idx)
+        private Color ColorFor(int maLoai)
         {
-            if (_active.TryGetValue(idx, out var go))
-            {
-                pool.Release(go);
-                _active.Remove(idx);
-            }
+            if (typeColors == null || typeColors.Length == 0) return Color.white;
+            return typeColors[Mathf.Clamp(maLoai, 0, typeColors.Length - 1)];
         }
 
         // ------------------------------------------------------------------ input
@@ -297,83 +332,29 @@ namespace Demo.Gameplay
             var mouse = Mouse.current;
             if (mouse == null) return;
 
+            // click = release without having dragged the camera
             if (mouse.leftButton.wasReleasedThisFrame && !_camController.DraggedThisPress)
             {
                 if (_input.TryGetHoveredCell(out var cell))
-                {
-                    CellClicked?.Invoke(cell);
-                    MoveSelection(cell);
-                    TogglePlace(cell);
-                }
+                    OnCellClicked(cell);
             }
-
-            if (mouse.rightButton.wasPressedThisFrame && _input.TryGetHoveredCell(out var rc))
-                Remove(rc);
         }
 
-        private void MoveSelection(Vector2Int cell)
-        {
-            if (selectionMarker == null) return;
-            selectionMarker.SetActive(true);
-            selectionMarker.transform.position = _math.CellToWorldCenter(cell) + new Vector3(0f, 0f, -0.01f);
-        }
-
-        private void TogglePlace(Vector2Int cell)
+        private void OnCellClicked(Vector2Int cell)
         {
             int idx = _data.IndexOf(cell.x, cell.y);
-            ref var c = ref _data.Get(cell.x, cell.y);
-            if (c.objectId == 0)
+            int id = _idByIndex[idx];
+
+            if (selectionMarker != null)
             {
-                c.objectId = 1;
-                SpawnVisual(idx, cell.x, cell.y);
+                selectionMarker.SetActive(true);
+                selectionMarker.transform.position = _math.CellToWorldCenter(cell) + new Vector3(0f, 0f, -0.01f);
             }
-            else
-            {
-                c.objectId = 0;
-                DespawnVisual(idx);
-            }
-        }
 
-        private void Remove(Vector2Int cell)
-        {
-            int idx = _data.IndexOf(cell.x, cell.y);
-            ref var c = ref _data.Get(cell.x, cell.y);
-            if (c.objectId == 0) return;
-            c.objectId = 0;
-            DespawnVisual(idx);
-        }
-
-        private void HandleSaveLoadShortcuts()
-        {
-            var kb = Keyboard.current;
-            if (kb == null) return;
-
-            if (kb.sKey.wasPressedThisFrame) GridSaveSystem.Save(_data);
-            if (kb.lKey.wasPressedThisFrame) LoadFromSave();
-            if (kb.cKey.wasPressedThisFrame) ClearAll();
-        }
-
-        private void LoadFromSave()
-        {
-            if (!GridSaveSystem.TryLoad(out var save)) return;
-            if (save.width != width || save.height != height) return;
-
-            ReleaseAllVisuals();
-            _data.cells = save.cells;
-            RefreshVisible(true);
-        }
-
-        private void ClearAll()
-        {
-            ReleaseAllVisuals();
-            for (int i = 0; i < _data.cells.Length; i++)
-                _data.cells[i].objectId = 0;
-        }
-
-        private void ReleaseAllVisuals()
-        {
-            foreach (var kv in _active) pool.Release(kv.Value);
-            _active.Clear();
+            if (id == 0) return;
+            if (logClicks)
+                Debug.Log($"Clicked cell id = {id}  (cx={cell.x + 1}, cy={cell.y + 1}, maLoai={_data.cells[idx].terrainType})");
+            CellIdClicked?.Invoke(id);
         }
 
         private Rect GetMapWorldBounds()
@@ -401,17 +382,16 @@ namespace Demo.Gameplay
             DrawRect(camRect);
 
             float pad = cullPadding * cellSize;
-            Rect cullRect = Rect.MinMaxRect(camRect.xMin - pad, camRect.yMin - pad, camRect.xMax + pad, camRect.yMax + pad);
             Gizmos.color = cullViewColor;
-            DrawRect(cullRect);
+            DrawRect(Rect.MinMaxRect(camRect.xMin - pad, camRect.yMin - pad, camRect.xMax + pad, camRect.yMax + pad));
         }
 
         private static void DrawRect(Rect r)
         {
-            Vector3 bl = new Vector3(r.xMin, r.yMin, 0f);
-            Vector3 br = new Vector3(r.xMax, r.yMin, 0f);
-            Vector3 tr = new Vector3(r.xMax, r.yMax, 0f);
-            Vector3 tl = new Vector3(r.xMin, r.yMax, 0f);
+            var bl = new Vector3(r.xMin, r.yMin, 0f);
+            var br = new Vector3(r.xMax, r.yMin, 0f);
+            var tr = new Vector3(r.xMax, r.yMax, 0f);
+            var tl = new Vector3(r.xMin, r.yMax, 0f);
             Gizmos.DrawLine(bl, br);
             Gizmos.DrawLine(br, tr);
             Gizmos.DrawLine(tr, tl);
@@ -421,11 +401,6 @@ namespace Demo.Gameplay
 #if UNITY_EDITOR
         // ------------------------------------------------------------------ edit-time preview (optional)
 
-        /// <summary>
-        /// OPTIONAL: pre-creates Camera, GridRenderer, pool objects and selection marker in the scene
-        /// so they can be tweaked before Play. At runtime the camera size is still checked and
-        /// any missing objects are created automatically.
-        /// </summary>
         [ContextMenu("Build Scene Objects")]
         public void BuildSceneObjects()
         {
@@ -470,63 +445,33 @@ namespace Demo.Gameplay
             for (int i = pool.transform.childCount - 1; i >= 0; i--)
                 DestroyImmediate(pool.transform.GetChild(i).gameObject);
 
-            Material objMat = placePrefab == null
-                ? GetOrCreateMaterial("Assets/Materials/CellObject.mat", objectColor)
-                : null;
-
             float aspect = Mathf.Max(designAspect, mainCamera.aspect);
             int count = CapacityFor(startOrthoSize, aspect);
-            float viewW = startOrthoSize * aspect * 2f;
-            float viewH = startOrthoSize * 2f;
-            int cols = Mathf.Clamp(Mathf.CeilToInt(viewW / cellSize) + cullPadding * 2 + 2, 1, width);
-            int rows = Mathf.Clamp(Mathf.CeilToInt(viewH / cellSize) + cullPadding * 2 + 2, 1, height);
-            int minX = Mathf.Clamp(Mathf.FloorToInt((map.center.x - viewW * 0.5f - origin.x) / cellSize) - cullPadding, 0, Mathf.Max(0, width - cols));
-            int minY = Mathf.Clamp(Mathf.FloorToInt((map.center.y - viewH * 0.5f - origin.y) / cellSize) - cullPadding, 0, Mathf.Max(0, height - rows));
-
-            var math = new GridMath(origin, cellSize);
             var list = new List<GameObject>(count);
             for (int i = 0; i < count; i++)
             {
                 GameObject go;
                 if (placePrefab != null)
-                {
                     go = (GameObject)PrefabUtility.InstantiatePrefab(placePrefab, pool.transform);
-                }
                 else
                 {
                     go = GameObject.CreatePrimitive(PrimitiveType.Quad);
                     go.transform.SetParent(pool.transform, false);
                     go.transform.localScale = new Vector3(objectScale * cellSize, objectScale * cellSize, 1f);
-                    go.GetComponent<MeshRenderer>().sharedMaterial = objMat;
+                    go.GetComponent<MeshRenderer>().sharedMaterial = new Material(Shader.Find("Sprites/Default"));
                     var col = go.GetComponent<Collider>();
                     if (col != null) DestroyImmediate(col);
                 }
-
+                if (go.GetComponent<CellView>() == null) go.AddComponent<CellView>();
                 go.name = "Cell_" + i.ToString("000");
-                go.transform.position = math.CellToWorldCenter(new Vector2Int(minX + i % cols, minY + i / cols));
-                go.SetActive(true);
+                go.transform.position = new Vector3(map.center.x + (i % 20) * cellSize, map.center.y + (i / 20) * cellSize, 0f);
                 list.Add(go);
             }
             pool.SetItems(list);
             EditorUtility.SetDirty(pool);
-
-            if (selectionMarker == null)
-            {
-                var m = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                m.name = "SelectionMarker";
-                m.transform.SetParent(objectRoot, false);
-                m.transform.localScale = new Vector3(cellSize * 0.95f, cellSize * 0.95f, 1f);
-                m.GetComponent<MeshRenderer>().sharedMaterial = GetOrCreateMaterial("Assets/Materials/SelectionMarker.mat", selectionColor);
-                var col = m.GetComponent<Collider>();
-                if (col != null) DestroyImmediate(col);
-                m.SetActive(false);
-                selectionMarker = m;
-            }
-
             EditorUtility.SetDirty(this);
-            EditorUtility.SetDirty(mainCamera);
             EditorSceneManager.MarkSceneDirty(gameObject.scene);
-            Debug.Log($"[GridController] Built {count} preview pool objects in the scene. Save the scene (Ctrl+S).");
+            Debug.Log($"[GridController] Built {count} preview cell objects. They are hidden/bound to ids automatically on Play.");
         }
 
         [ContextMenu("Clear Scene Objects")]
@@ -540,22 +485,6 @@ namespace Demo.Gameplay
                 EditorUtility.SetDirty(pool);
             }
             EditorSceneManager.MarkSceneDirty(gameObject.scene);
-        }
-
-        private static Material GetOrCreateMaterial(string path, Color color)
-        {
-            var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (mat == null)
-            {
-                if (!AssetDatabase.IsValidFolder("Assets/Materials"))
-                    AssetDatabase.CreateFolder("Assets", "Materials");
-                mat = new Material(Shader.Find("Sprites/Default"));
-                AssetDatabase.CreateAsset(mat, path);
-            }
-            mat.color = color;
-            EditorUtility.SetDirty(mat);
-            AssetDatabase.SaveAssets();
-            return mat;
         }
 #endif
     }

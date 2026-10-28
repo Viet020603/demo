@@ -1,34 +1,33 @@
-# Unity Grid Strategy Demo (31x31)
+# Unity Grid Strategy Demo (31x31, JSON driven)
 
-Unity version: **6000.3.20f1** · Uses the **new Input System** package.
+Unity version: **6000.3.20f1** · new Input System.
 
-Repo: https://github.com/Viet020603/demo
+## Map from JSON
+1. Copy your **`o_ban_do.json`** into **`Assets/Resources/o_ban_do.json`**
+   (or drag it into the `Map File` field of `GridController`).
+2. Press Play.
 
-## How objects are spawned
-On Play, `GridController` **checks the real camera size** (`orthographicSize` and `aspect`), computes how many cells the camera can see (+ `cullPadding`) and creates **only that many objects** (just the missing ones if some already exist in the scene). Nothing else is instantiated.
+JSON format (array):
+```json
+[ { "id": 101, "maLoai": 4, "cx": 1, "cy": 1 }, ... ]
+```
+- `cx` = column, `cy` = row (1-based), `id` = unique cell id, `maLoai` = cell type.
+- Grid size is detected automatically from the max `cx` / `cy`.
 
-- While you pan the camera, objects leaving the view are returned to the pool and reused for cells entering the view.
-- If you zoom out / the window aspect changes, the capacity is re-checked and the pool grows only when needed (it never shrinks, so it is reused).
-- The console logs e.g. `Camera size=6, aspect=1.78 -> needs 168 objects. Created 168, pool total 168.`
+## How it works
+- Every cell in the JSON is a **prefab instance (`CellView`) bound to its `id`**.
+- To stay fast, only cells inside the camera view are instantiated; they are pooled and reused while panning, and re-bound to the new cell's id.
+- Pool size is computed from the real camera size at runtime.
+- **Click a cell -> Console prints** `Clicked cell id = 101 (cx=1, cy=1, maLoai=4)`.
+- Subscribe in code: `gridController.CellIdClicked += id => { ... }`.
 
-## Optional: preview objects in the editor
-Menu **Tools > Grid Demo > Build Scene Objects** (or the button on `GameBootstrap`) pre-creates camera, grid, pool objects and selection marker in the scene so you can tweak them before Play. At runtime the camera is still checked and any missing objects are created automatically.
-
-## Features
-- 31x31 data-driven grid (no 961 per-cell GameObjects)
-- Drag to pan the camera (left or middle mouse), clamped to the map
-- Camera-size based pool + viewport culling
-- Every cell is clickable via mouse -> cell math (no colliders)
-- Selection marker, save/load/clear
-- Gizmos: red = map, cyan = camera view, yellow = culling area
+## Custom prefab / colors
+- Assign `placePrefab` on `GridController` to use your own cell prefab (a `CellView` is added if missing).
+- `typeColors` sets the color per `maLoai` (index = maLoai).
 
 ## Controls
-- Left drag / middle drag: move camera
-- Left click (no drag): select cell and toggle object
-- Right click: remove object
+- Left drag / middle drag: pan camera
+- Left click (no drag): select + log id
 - Mouse wheel: zoom
-- `S` save, `L` load, `C` clear
 
-## Notes
-- Set **Project Settings > Player > Active Input Handling** to `Input System Package (New)` or `Both`.
-- Optional: assign `placePrefab` on `GridController` to use your own sprite/prefab for pool items.
+Gizmos: red = map, cyan = camera view, yellow = culling area.
