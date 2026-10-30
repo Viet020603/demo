@@ -32,3 +32,9 @@ JSON format:
 - Left or middle mouse drag: pan the grid.
 - Left click without dragging: select a cell.
 - Mouse wheel: zoom around the cursor.
+
+## Start button / popup flow
+
+- `PopupBase` (abstract: `Init`, `Show`, `Close`, `Dispose`) is the base for popups; it reports open/close to `GameManager`.
+- `UiGridController` now derives from `PopupBase`. It is built in `Init` but stays hidden until `Show`.
+- `UiManager` creates a **START** button (or use your own: assign `Start Button` / `Grid Popup`). Pressing it hides the button and opens the grid. `Esc` closes the grid and shows the button again.

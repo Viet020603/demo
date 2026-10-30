@@ -15,7 +15,7 @@ namespace Demo.Gameplay
     /// Only the cells inside the viewport are active (pooled UI Images, reused while panning).
     /// Cells never receive raycasts: clicks are resolved with math, so any of the cells is clickable.
     /// </summary>
-    public class UiGridController : MonoBehaviour
+    public class UiGridController : PopupBase
     {
         [Header("Map data (o_ban_do.json)")]
         [SerializeField] private TextAsset mapFile;
@@ -103,23 +103,58 @@ namespace Demo.Gameplay
         private bool _pressed, _dragged;
         private Vector2 _pressScreen, _lastScreen;
 
-        private void Awake()
+        private bool _initialized, _needFit;
+
+        public override void Init(UiManager _uiManager)
         {
+            uiManager = _uiManager;
+            if (_initialized) return;
+            _initialized = true;
+
             LoadMap();
             BuildCanvas();
-            Canvas.ForceUpdateCanvases();
-            _zoom = fitMapOnStart ? FitZoom() : startZoom;
-            _zoom = Mathf.Clamp(_zoom, minZoom, maxZoom);
-            content.localScale = Vector3.one * _zoom;
-            CenterContent();
+            _needFit = true;
         }
 
-        private void Start()
+        public override void Show()
         {
+            gameObject.SetActive(true);
+            if (canvas != null) canvas.gameObject.SetActive(true);
+            if (!_initialized) return;
+
+            if (_needFit)
+            {
+                _needFit = false;
+                Canvas.ForceUpdateCanvases();
+                _zoom = Mathf.Clamp(fitMapOnStart ? FitZoom() : startZoom, minZoom, maxZoom);
+                content.localScale = Vector3.one * _zoom;
+                CenterContent();
+            }
             RefreshVisible(true);
 
             if (autoZoomToCenterOnStart)
                 _autoZoomRoutine = StartCoroutine(AutoZoomToCenterRoutine());
+        }
+
+        public override void Close()
+        {
+            _pressed = false;
+            _dragged = false;
+            gameObject.SetActive(false);
+            if (canvas != null) canvas.gameObject.SetActive(false);
+        }
+
+        public override void Dispose()
+        {
+            foreach (var cell in _active.Values) if (cell != null) Destroy(cell.gameObject);
+            _active.Clear();
+            while (_free.Count > 0)
+            {
+                var cell = _free.Pop();
+                if (cell != null) Destroy(cell.gameObject);
+            }
+            if (canvas != null && canvas.gameObject != gameObject) Destroy(canvas.gameObject);
+            _initialized = false;
         }
 
         // -------------------------------------------------------------- setup
@@ -314,6 +349,15 @@ namespace Demo.Gameplay
 
         private void Update()
         {
+            if (!_initialized) return;
+
+            if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+            {
+                Close();
+                uiManager?.OnGridClosed();
+                return;
+            }
+
             var mouse = Mouse.current;
             if (mouse != null)
             {
