@@ -1,9 +1,11 @@
+using Demo.Grid;
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
-using Demo.Grid;
 
 namespace Demo.Gameplay
 {
@@ -65,7 +67,15 @@ namespace Demo.Gameplay
         [Header("Debug")]
         [SerializeField] private bool logClicks = true;
 
-        [SerializeField] private Color[] typeColors = new Color[]
+        [Header("Auto zoom on start")]
+        [SerializeField] private bool autoZoomToCenterOnStart = true;
+        [SerializeField, Min(0f)] private float autoZoomDelay = 2f;
+        [SerializeField] private float autoZoomScale = 1.3f;
+        [SerializeField, Min(0.01f)] private float autoZoomDuration = 0.6f;
+
+        private Coroutine _autoZoomRoutine;
+        [SerializeField]
+        private Color[] typeColors = new Color[]
         {
             new Color(0.5f, 0.5f, 0.5f),
             new Color(1.0f, 0.2f, 0.2f),
@@ -107,10 +117,20 @@ namespace Demo.Gameplay
         private void Start()
         {
             RefreshVisible(true);
+
+            if (autoZoomToCenterOnStart)
+                _autoZoomRoutine = StartCoroutine(AutoZoomToCenterRoutine());
         }
 
         // -------------------------------------------------------------- setup
-
+        private void OnDisable()
+        {
+            if (_autoZoomRoutine != null)
+            {
+                StopCoroutine(_autoZoomRoutine);
+                _autoZoomRoutine = null;
+            }
+        }
         private void LoadMap()
         {
             TextAsset asset = mapFile != null ? mapFile : Resources.Load<TextAsset>(resourceName);
@@ -368,10 +388,14 @@ namespace Demo.Gameplay
 
         private void CenterContent()
         {
+            //content.anchoredPosition = Vector2.zero;
+            //Canvas.ForceUpdateCanvases();
+            //Vector2 view = viewport.rect.size;
+            //content.anchoredPosition = (view - content.sizeDelta * _zoom) * 0.5f;
+
             content.anchoredPosition = Vector2.zero;
             Canvas.ForceUpdateCanvases();
-            Vector2 view = viewport.rect.size;
-            content.anchoredPosition = (view - content.sizeDelta * _zoom) * 0.5f;
+            content.anchoredPosition = CenteredPositionForZoom(_zoom);
         }
 
         // -------------------------------------------------------------- click
@@ -487,5 +511,48 @@ namespace Demo.Gameplay
             if (typeColors == null || typeColors.Length == 0) return Color.white;
             return typeColors[Mathf.Clamp(maLoai, 0, typeColors.Length - 1)];
         }
+
+        private IEnumerator AutoZoomToCenterRoutine()
+        {
+            if (autoZoomDelay > 0f)
+                yield return new WaitForSeconds(autoZoomDelay);
+
+            float startScale = _zoom;
+            float targetScale = Mathf.Clamp(autoZoomScale, minZoom, maxZoom);
+
+            Vector2 startPos = content.anchoredPosition;
+            Vector2 targetPos = CenteredPositionForZoom(targetScale);
+
+            float elapsed = 0f;
+            while (elapsed < autoZoomDuration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / autoZoomDuration);
+                float k = Mathf.SmoothStep(0f, 1f, t);
+
+                _zoom = Mathf.Lerp(startScale, targetScale, k);
+                content.localScale = Vector3.one * _zoom;
+                content.anchoredPosition = Vector2.Lerp(startPos, targetPos, k);
+
+                RefreshVisible(false);
+                yield return null;
+            }
+
+            _zoom = targetScale;
+            content.localScale = Vector3.one * _zoom;
+            content.anchoredPosition = targetPos;
+            ClampContent();
+            RefreshVisible(false);
+        }
+
+        private Vector2 CenteredPositionForZoom(float zoom)
+        {
+            Vector2 view = viewport.rect.size;
+            return (view - content.sizeDelta * zoom) * 0.5f;
+        }
+
     }
 }
+
+   
+
