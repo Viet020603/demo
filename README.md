@@ -27,5 +27,3 @@ JSON format:
 - Left or middle mouse drag: pan the grid.
 - Left click without dragging: select a cell.
 - Mouse wheel: zoom around the cursor.
-
-The old world-space `GridController` is disabled when the Canvas grid bootstraps.

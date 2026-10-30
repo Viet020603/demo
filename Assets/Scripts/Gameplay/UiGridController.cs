@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
-using Demo.CameraControl;
 using Demo.Grid;
 
 namespace Demo.Gameplay
@@ -78,7 +77,6 @@ namespace Demo.Gameplay
 
         private void Awake()
         {
-            DisableWorldSpaceVersion();
             LoadMap();
             BuildCanvas();
             _zoom = Mathf.Clamp(startZoom, minZoom, maxZoom);
@@ -92,18 +90,6 @@ namespace Demo.Gameplay
         }
 
         // -------------------------------------------------------------- setup
-
-        private static void DisableWorldSpaceVersion()
-        {
-            var old = FindFirstObjectByType<GridController>();
-            if (old != null) old.enabled = false;
-            var cam = Camera.main;
-            if (cam != null)
-            {
-                var c = cam.GetComponent<CameraController2D>();
-                if (c != null) c.enabled = false;
-            }
-        }
 
         private void LoadMap()
         {
