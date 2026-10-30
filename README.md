@@ -14,11 +14,12 @@ JSON format:
 - Grid size is detected automatically from the largest `cx` and `cy`.
 
 ## Canvas and grid
-- The grid UI is placed under a standalone `GridCanvas` root, separate from the bootstrap/controller object.
+- In the Unity Editor, run **Tools > Grid Demo > Create Canvas Prefabs and Scene Instance** before Play. This creates `Assets/Prefabs/GridCanvas.prefab` and `Assets/Prefabs/UICell.prefab`, then adds a `GridCanvas` prefab instance to the open scene.
+- The Canvas prefab is a standalone scene root with editable `Viewport`, `Content`, and `SelectionMarker` children, plus the `UiGridController` settings. Adjust the prefab or scene instance before Play.
 - Canvas render mode is **Screen Space - Camera**. The controller uses its assigned `Canvas Camera`, otherwise `MainCamera` (and creates one if needed).
-- You can assign an existing Canvas and Camera to `UiGridController`; if no Canvas is assigned, it creates the standalone Canvas at runtime.
-- The Canvas hierarchy is `GridCanvas > Viewport > Content`. Only visible cell views are active; views leaving the viewport are reused while panning.
-- Set `Cell Prefab` to a uGUI prefab containing an `Image` or another `Graphic`. If left empty, simple Image cells are created automatically.
+- The Canvas hierarchy is `GridCanvas > Viewport > Content > SelectionMarker`. Only visible cell views are active; views leaving the viewport are reused while panning.
+- `UICell.prefab` is the pooled cell template. Edit its `Image` or add UI components, then assign it in `UiGridController`'s `Cell Prefab` field if needed.
+- If the prefab builder has not been run, the controller retains a runtime fallback that creates the Canvas hierarchy and simple Image cells.
 - Cells are clickable via coordinate conversion without a collider or raycast. Clicking logs the cell `id`, coordinates, and type.
 - The `CellIdClicked` event exposes the clicked id to other scripts.
 

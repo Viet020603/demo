@@ -23,6 +23,9 @@ namespace Demo.Gameplay
         [Header("Canvas")]
         [SerializeField] private Canvas canvas;
         [SerializeField] private Camera canvasCamera;
+        [SerializeField] private RectTransform viewport;
+        [SerializeField] private RectTransform content;
+        [SerializeField] private RectTransform selectionMarker;
         [SerializeField] private float canvasPlaneDistance = 1f;
         [SerializeField] private Vector2 referenceResolution = new Vector2(1920f, 1080f);
         [SerializeField] private float cellSizePx = 64f;
@@ -64,10 +67,6 @@ namespace Demo.Gameplay
         private int[] _idByIndex;
         private byte[] _typeByIndex;
 
-        private RectTransform _viewport;
-        private RectTransform _content;
-        private RectTransform _marker;
-
         private readonly Dictionary<int, CellView> _active = new Dictionary<int, CellView>();
         private readonly Stack<CellView> _free = new Stack<CellView>();
         private readonly List<int> _tmp = new List<int>();
@@ -83,7 +82,7 @@ namespace Demo.Gameplay
             LoadMap();
             BuildCanvas();
             _zoom = Mathf.Clamp(startZoom, minZoom, maxZoom);
-            _content.localScale = Vector3.one * _zoom;
+            content.localScale = Vector3.one * _zoom;
             CenterContent();
         }
 
@@ -170,31 +169,42 @@ namespace Demo.Gameplay
             scaler.referenceResolution = referenceResolution;
             scaler.matchWidthOrHeight = 0.5f;
 
-            var vp = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D), typeof(Image));
-            _viewport = vp.GetComponent<RectTransform>();
-            _viewport.SetParent(canvas.transform, false);
-            Stretch(_viewport);
-            var bg = vp.GetComponent<Image>();
+            if (viewport == null)
+            {
+                var vp = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D), typeof(Image));
+                viewport = vp.GetComponent<RectTransform>();
+            }
+            viewport.SetParent(canvas.transform, false);
+            Stretch(viewport);
+            var bg = viewport.GetComponent<Image>();
+            if (bg == null) bg = viewport.gameObject.AddComponent<Image>();
             bg.color = backgroundColor;
             bg.raycastTarget = false;
 
-            var ct = new GameObject("Content", typeof(RectTransform));
-            _content = ct.GetComponent<RectTransform>();
-            _content.SetParent(_viewport, false);
-            _content.anchorMin = _content.anchorMax = Vector2.zero;
-            _content.pivot = Vector2.zero;
-            _content.sizeDelta = new Vector2(_width * cellSizePx, _height * cellSizePx);
+            if (content == null)
+            {
+                var ct = new GameObject("Content", typeof(RectTransform));
+                content = ct.GetComponent<RectTransform>();
+            }
+            content.SetParent(viewport, false);
+            content.anchorMin = content.anchorMax = Vector2.zero;
+            content.pivot = Vector2.zero;
+            content.sizeDelta = new Vector2(_width * cellSizePx, _height * cellSizePx);
 
-            var mk = new GameObject("SelectionMarker", typeof(RectTransform), typeof(Image));
-            _marker = mk.GetComponent<RectTransform>();
-            _marker.SetParent(_content, false);
-            _marker.anchorMin = _marker.anchorMax = Vector2.zero;
-            _marker.pivot = new Vector2(0.5f, 0.5f);
-            _marker.sizeDelta = new Vector2(cellSizePx, cellSizePx);
-            var mi = mk.GetComponent<Image>();
+            if (selectionMarker == null)
+            {
+                var mk = new GameObject("SelectionMarker", typeof(RectTransform), typeof(Image));
+                selectionMarker = mk.GetComponent<RectTransform>();
+            }
+            selectionMarker.SetParent(content, false);
+            selectionMarker.anchorMin = selectionMarker.anchorMax = Vector2.zero;
+            selectionMarker.pivot = new Vector2(0.5f, 0.5f);
+            selectionMarker.sizeDelta = new Vector2(cellSizePx, cellSizePx);
+            var mi = selectionMarker.GetComponent<Image>();
+            if (mi == null) mi = selectionMarker.gameObject.AddComponent<Image>();
             mi.color = selectionColor;
             mi.raycastTarget = false;
-            mk.SetActive(false);
+            selectionMarker.gameObject.SetActive(false);
         }
 
         private static void Stretch(RectTransform rt)
@@ -240,7 +250,7 @@ namespace Demo.Gameplay
                 }
                 if (_dragged)
                 {
-                    _content.anchoredPosition += (screen - _lastScreen) / canvas.scaleFactor;
+                    content.anchoredPosition += (screen - _lastScreen) / canvas.scaleFactor;
                     _lastScreen = screen;
                 }
             }
@@ -259,47 +269,47 @@ namespace Demo.Gameplay
             if (Mathf.Abs(scroll) < 0.001f) return;
 
             Vector2 screen = mouse.position.ReadValue();
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_content, screen, canvasCamera, out var before)) return;
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(_viewport, screen, canvasCamera, out var inViewport);
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screen, canvasCamera, out var before)) return;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(viewport, screen, canvasCamera, out var inViewport);
 
             _zoom = Mathf.Clamp(_zoom * (1f + Mathf.Sign(scroll) * zoomStep), minZoom, maxZoom);
-            _content.localScale = Vector3.one * _zoom;
+            content.localScale = Vector3.one * _zoom;
 
             // keep the point under the cursor fixed; viewport local space has its pivot at the center
-            Vector2 vpFromBottomLeft = inViewport + _viewport.rect.size * 0.5f;
-            _content.anchoredPosition = vpFromBottomLeft - before * _zoom;
+            Vector2 vpFromBottomLeft = inViewport + viewport.rect.size * 0.5f;
+            content.anchoredPosition = vpFromBottomLeft - before * _zoom;
         }
 
         private void ClampContent()
         {
-            Vector2 view = _viewport.rect.size;
-            Vector2 size = _content.sizeDelta * _zoom;
-            Vector2 p = _content.anchoredPosition;
+            Vector2 view = viewport.rect.size;
+            Vector2 size = content.sizeDelta * _zoom;
+            Vector2 p = content.anchoredPosition;
             p.x = size.x <= view.x ? (view.x - size.x) * 0.5f : Mathf.Clamp(p.x, view.x - size.x, 0f);
             p.y = size.y <= view.y ? (view.y - size.y) * 0.5f : Mathf.Clamp(p.y, view.y - size.y, 0f);
-            _content.anchoredPosition = p;
+            content.anchoredPosition = p;
         }
 
         private void CenterContent()
         {
-            _content.anchoredPosition = Vector2.zero;
+            content.anchoredPosition = Vector2.zero;
             Canvas.ForceUpdateCanvases();
-            Vector2 view = _viewport.rect.size;
-            _content.anchoredPosition = (view - _content.sizeDelta * _zoom) * 0.5f;
+            Vector2 view = viewport.rect.size;
+            content.anchoredPosition = (view - content.sizeDelta * _zoom) * 0.5f;
         }
 
         // -------------------------------------------------------------- click
 
         private void TryClick(Vector2 screen)
         {
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_content, screen, canvasCamera, out var local)) return;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screen, canvasCamera, out var local)) return;
             int x = Mathf.FloorToInt(local.x / cellSizePx);
             int y = Mathf.FloorToInt(local.y / cellSizePx);
             if (x < 0 || y < 0 || x >= _width || y >= _height) return;
 
-            _marker.gameObject.SetActive(true);
-            _marker.anchoredPosition = CellCenter(x, y);
-            _marker.SetAsLastSibling();
+            selectionMarker.gameObject.SetActive(true);
+            selectionMarker.anchoredPosition = CellCenter(x, y);
+            selectionMarker.SetAsLastSibling();
 
             int idx = y * _width + x;
             int id = _idByIndex[idx];
@@ -316,8 +326,8 @@ namespace Demo.Gameplay
 
         private RectInt GetVisibleRect()
         {
-            Vector2 view = _viewport.rect.size;
-            Vector2 p = _content.anchoredPosition;
+            Vector2 view = viewport.rect.size;
+            Vector2 p = content.anchoredPosition;
             float minX = -p.x / _zoom, minY = -p.y / _zoom;
             float maxX = (view.x - p.x) / _zoom, maxY = (view.y - p.y) / _zoom;
 
@@ -369,18 +379,18 @@ namespace Demo.Gameplay
             int maLoai = _typeByIndex[idx];
             view.Bind(_idByIndex[idx], maLoai, x + 1, y + 1, ColorFor(maLoai));
             _active[idx] = view;
-            _marker.SetAsLastSibling();
+            selectionMarker.SetAsLastSibling();
         }
 
         private CellView CreateCell()
         {
             GameObject go;
             if (cellPrefab != null)
-                go = Instantiate(cellPrefab, _content, false);
+                go = Instantiate(cellPrefab, content, false);
             else
                 go = new GameObject("Cell", typeof(RectTransform), typeof(Image));
 
-            go.transform.SetParent(_content, false);
+            go.transform.SetParent(content, false);
             var rt = (RectTransform)go.transform;
             rt.anchorMin = rt.anchorMax = Vector2.zero;
             rt.pivot = new Vector2(0.5f, 0.5f);
