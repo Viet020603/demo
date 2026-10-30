@@ -39,16 +39,28 @@ namespace Demo.Gameplay
         [SerializeField] private Image mapBackground;
         [SerializeField] private string backgroundResource = "Sprite/dat";
 
+        [Header("Map layout (background is larger than the grid, like the reference)")]
+        [Tooltip("Empty border around the grid, in cells. The background and frame cover grid + border.")]
+        [SerializeField, Min(0)] private float borderCells = 4f;
+        [Tooltip("Optional decorative frame (trees, clouds, water) with a transparent center. Drawn over the ground, under the grid.")]
+        [SerializeField] private Image mapFrame;
+        [SerializeField] private GridLinesGraphic gridLines;
+        [SerializeField] private Color gridLineColor = new Color(0.1f, 0.3f, 0.05f, 0.75f);
+        [SerializeField] private float gridLineThickness = 1.5f;
+        [Tooltip("Opacity of the per-type cell tint. 0 = cells are transparent (only icons / selection show).")]
+        [SerializeField, Range(0f, 1f)] private float cellTintAlpha = 0f;
+        [SerializeField] private bool fitMapOnStart = true;
+
         [Header("Camera (drag / zoom)")]
         [SerializeField] private float dragThresholdPixels = 6f;
-        [SerializeField] private float minZoom = 0.5f;
+        [SerializeField] private float minZoom = 0.2f;
         [SerializeField] private float maxZoom = 2f;
         [SerializeField] private float startZoom = 1f;
         [SerializeField] private float zoomStep = 0.1f;
         [SerializeField] private int cullPadding = 1;
 
         [Header("Selection")]
-        [SerializeField] private Color selectionColor = new Color(1f, 1f, 1f, 0.45f);
+        [SerializeField] private Color selectionColor = new Color(0.85f, 0.42f, 0.12f, 0.9f);
 
         [Header("Debug")]
         [SerializeField] private bool logClicks = true;
@@ -85,7 +97,9 @@ namespace Demo.Gameplay
         {
             LoadMap();
             BuildCanvas();
-            _zoom = Mathf.Clamp(startZoom, minZoom, maxZoom);
+            Canvas.ForceUpdateCanvases();
+            _zoom = fitMapOnStart ? FitZoom() : startZoom;
+            _zoom = Mathf.Clamp(_zoom, minZoom, maxZoom);
             content.localScale = Vector3.one * _zoom;
             CenterContent();
         }
@@ -181,9 +195,13 @@ namespace Demo.Gameplay
             content.SetParent(viewport, false);
             content.anchorMin = content.anchorMax = Vector2.zero;
             content.pivot = Vector2.zero;
-            content.sizeDelta = new Vector2(_width * cellSizePx, _height * cellSizePx);
+            content.sizeDelta = new Vector2(
+                (_width + borderCells * 2f) * cellSizePx,
+                (_height + borderCells * 2f) * cellSizePx);
 
             SetupBackground();
+            SetupFrame();
+            SetupGridLines();
 
             if (selectionMarker == null)
             {
@@ -221,6 +239,48 @@ namespace Demo.Gameplay
             mapBackground.type = Image.Type.Simple;
             mapBackground.preserveAspect = false;
             mapBackground.raycastTarget = false;
+        }
+
+        private void SetupFrame()
+        {
+            if (mapFrame == null) return;
+            var rt = mapFrame.rectTransform;
+            rt.SetParent(content, false);
+            Stretch(rt);
+            rt.SetSiblingIndex(1);
+            mapFrame.raycastTarget = false;
+            mapFrame.enabled = mapFrame.sprite != null;
+        }
+
+        private void SetupGridLines()
+        {
+            if (gridLines == null)
+            {
+                var go = new GameObject("GridLines", typeof(RectTransform), typeof(CanvasRenderer), typeof(GridLinesGraphic));
+                gridLines = go.GetComponent<GridLinesGraphic>();
+            }
+
+            var rt = gridLines.rectTransform;
+            rt.SetParent(content, false);
+            rt.anchorMin = rt.anchorMax = Vector2.zero;
+            rt.pivot = Vector2.zero;
+            rt.anchoredPosition = GridOrigin;
+            rt.sizeDelta = new Vector2(_width * cellSizePx, _height * cellSizePx);
+            rt.SetSiblingIndex(mapFrame != null ? 2 : 1);
+
+            gridLines.color = gridLineColor;
+            gridLines.raycastTarget = false;
+            gridLines.Configure(_width, _height, gridLineThickness);
+        }
+
+        private Vector2 GridOrigin => new Vector2(borderCells * cellSizePx, borderCells * cellSizePx);
+
+        private float FitZoom()
+        {
+            Vector2 view = viewport.rect.size;
+            Vector2 size = content.sizeDelta;
+            if (size.x <= 0f || size.y <= 0f) return startZoom;
+            return Mathf.Min(view.x / size.x, view.y / size.y);
         }
 
         private static void Stretch(RectTransform rt)
@@ -319,6 +379,7 @@ namespace Demo.Gameplay
         private void TryClick(Vector2 screen)
         {
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screen, canvasCamera, out var local)) return;
+            local -= GridOrigin;
             int x = Mathf.FloorToInt(local.x / cellSizePx);
             int y = Mathf.FloorToInt(local.y / cellSizePx);
             if (x < 0 || y < 0 || x >= _width || y >= _height) return;
@@ -336,7 +397,7 @@ namespace Demo.Gameplay
         }
 
         private Vector2 CellCenter(int x, int y) =>
-            new Vector2((x + 0.5f) * cellSizePx, (y + 0.5f) * cellSizePx);
+            GridOrigin + new Vector2((x + 0.5f) * cellSizePx, (y + 0.5f) * cellSizePx);
 
         // -------------------------------------------------------------- culling + pool
 
@@ -344,8 +405,9 @@ namespace Demo.Gameplay
         {
             Vector2 view = viewport.rect.size;
             Vector2 p = content.anchoredPosition;
-            float minX = -p.x / _zoom, minY = -p.y / _zoom;
-            float maxX = (view.x - p.x) / _zoom, maxY = (view.y - p.y) / _zoom;
+            Vector2 o = GridOrigin;
+            float minX = -p.x / _zoom - o.x, minY = -p.y / _zoom - o.y;
+            float maxX = (view.x - p.x) / _zoom - o.x, maxY = (view.y - p.y) / _zoom - o.y;
 
             int x0 = Mathf.Clamp(Mathf.FloorToInt(minX / cellSizePx) - cullPadding, 0, _width - 1);
             int x1 = Mathf.Clamp(Mathf.FloorToInt(maxX / cellSizePx) + cullPadding, 0, _width - 1);
@@ -393,7 +455,9 @@ namespace Demo.Gameplay
             view.gameObject.SetActive(true);
 
             int maLoai = _typeByIndex[idx];
-            view.Bind(_idByIndex[idx], maLoai, x + 1, y + 1, ColorFor(maLoai));
+            Color tint = ColorFor(maLoai);
+            tint.a = cellTintAlpha;
+            view.Bind(_idByIndex[idx], maLoai, x + 1, y + 1, tint);
             _active[idx] = view;
             selectionMarker.SetAsLastSibling();
         }

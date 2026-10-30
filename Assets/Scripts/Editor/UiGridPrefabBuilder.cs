@@ -112,6 +112,22 @@ namespace Demo.Editor
             backgroundImage.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(BackgroundSpritePath);
             backgroundImage.raycastTarget = false;
 
+            var frameObject = new GameObject("MapFrame", typeof(RectTransform), typeof(Image));
+            var frameRect = frameObject.GetComponent<RectTransform>();
+            frameRect.SetParent(content, false);
+            frameRect.anchorMin = Vector2.zero;
+            frameRect.anchorMax = Vector2.one;
+            frameRect.offsetMin = frameRect.offsetMax = Vector2.zero;
+            var frameImage = frameObject.GetComponent<Image>();
+            frameImage.raycastTarget = false;
+            frameImage.enabled = false;
+
+            var gridLinesObject = new GameObject("GridLines", typeof(RectTransform), typeof(CanvasRenderer), typeof(GridLinesGraphic));
+            var gridLines = gridLinesObject.GetComponent<GridLinesGraphic>();
+            gridLines.rectTransform.SetParent(content, false);
+            gridLines.color = new Color(0.1f, 0.3f, 0.05f, 0.75f);
+            gridLines.raycastTarget = false;
+
             var markerObject = new GameObject("SelectionMarker", typeof(RectTransform), typeof(Image));
             var marker = markerObject.GetComponent<RectTransform>();
             marker.SetParent(content, false);
@@ -119,7 +135,7 @@ namespace Demo.Editor
             marker.pivot = new Vector2(0.5f, 0.5f);
             marker.sizeDelta = new Vector2(64f, 64f);
             var markerImage = markerObject.GetComponent<Image>();
-            markerImage.color = new Color(1f, 1f, 1f, 0.45f);
+            markerImage.color = new Color(0.85f, 0.42f, 0.12f, 0.9f);
             markerImage.raycastTarget = false;
             markerObject.SetActive(false);
 
@@ -130,6 +146,8 @@ namespace Demo.Editor
             serializedController.FindProperty("content").objectReferenceValue = content;
             serializedController.FindProperty("mapBackground").objectReferenceValue = backgroundImage;
             serializedController.FindProperty("backgroundSprite").objectReferenceValue = backgroundImage.sprite;
+            serializedController.FindProperty("mapFrame").objectReferenceValue = frameImage;
+            serializedController.FindProperty("gridLines").objectReferenceValue = gridLines;
             serializedController.FindProperty("selectionMarker").objectReferenceValue = marker;
             serializedController.FindProperty("cellPrefab").objectReferenceValue = cellPrefab;
             serializedController.ApplyModifiedPropertiesWithoutUndo();

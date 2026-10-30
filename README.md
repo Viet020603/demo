@@ -19,6 +19,10 @@ JSON format:
 - Canvas render mode is **Screen Space - Camera**. The controller uses its assigned `Canvas Camera`, otherwise `MainCamera` (and creates one if needed).
 - The Canvas hierarchy is `GridCanvas > Viewport > Content > SelectionMarker`. Only visible cell views are active; views leaving the viewport are reused while panning.
 - `Content > MapBackground` shows `Assets/Resources/Sprite/dat.png` and pans/zooms with the grid. Replace it via `Background Sprite` on `UiGridController` (or the `MapBackground` Image in the prefab); when empty, `Resources/Sprite/dat` is loaded.
+- Layout matches the reference: `Content` = grid + `Border Cells` (default 4) on every side. The ground covers it all, the 31x31 grid is drawn in the middle as `GridLines` (one mesh, one draw call; color/thickness are editable), and cells are transparent (`Cell Tint Alpha` = 0) so only icons and the orange selection show.
+- `Content > MapFrame` is an optional decorative frame (trees, clouds, water) with a transparent center. Assign your sprite to its Image (it enables itself when a sprite is set); it is drawn above the ground and below the grid.
+- The camera starts zoomed out to fit the whole map (`Fit Map On Start`); drag and wheel zoom stay clamped to the map edges.
+- To show icons on cells, put them in a child Image of the cell prefab; the root Image receives the per-type tint.
 - `UICell.prefab` is the pooled cell template. Edit its `Image` or add UI components, then assign it in `UiGridController`'s `Cell Prefab` field if needed.
 - If the prefab builder has not been run, the controller retains a runtime fallback that creates the Canvas hierarchy and simple Image cells.
 - Cells are clickable via coordinate conversion without a collider or raycast. Clicking logs the cell `id`, coordinates, and type.
