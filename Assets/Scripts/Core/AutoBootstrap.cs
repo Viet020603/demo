@@ -9,7 +9,9 @@ namespace Demo.Bootstrap
         private static void EnsureBootstrap()
         {
             if (Object.FindFirstObjectByType<UiGridController>() != null) return;
-            if (Object.FindFirstObjectByType<GridController>() != null) return;
+
+            var oldGrid = Object.FindFirstObjectByType<GridController>();
+            if (oldGrid != null) oldGrid.enabled = false;
 
             var go = new GameObject("GameBootstrap");
             go.AddComponent<UiGridController>();

@@ -9,7 +9,7 @@ using Demo.Grid;
 namespace Demo.Gameplay
 {
     /// <summary>
-    /// uGUI version of the grid. Everything lives inside one Canvas:
+    /// uGUI version of the grid. The Canvas is a standalone scene root:
     /// Canvas > Viewport (RectMask2D) > Content (map). Drag moves Content, wheel zooms it.
     /// Only the cells inside the viewport are active (pooled UI Images, reused while panning).
     /// Cells never receive raycasts: clicks are resolved with math, so any of the cells is clickable.
@@ -21,6 +21,9 @@ namespace Demo.Gameplay
         [SerializeField] private string resourceName = "o_ban_do";
 
         [Header("Canvas")]
+        [SerializeField] private Canvas canvas;
+        [SerializeField] private Camera canvasCamera;
+        [SerializeField] private float canvasPlaneDistance = 1f;
         [SerializeField] private Vector2 referenceResolution = new Vector2(1920f, 1080f);
         [SerializeField] private float cellSizePx = 64f;
         [Tooltip("Cell prefab (needs a Graphic such as Image). Empty = auto-created Image.")]
@@ -61,7 +64,6 @@ namespace Demo.Gameplay
         private int[] _idByIndex;
         private byte[] _typeByIndex;
 
-        private Canvas _canvas;
         private RectTransform _viewport;
         private RectTransform _content;
         private RectTransform _marker;
@@ -140,18 +142,37 @@ namespace Demo.Gameplay
 
         private void BuildCanvas()
         {
-            var canvasGo = new GameObject("GridCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler));
-            canvasGo.transform.SetParent(transform, false);
-            _canvas = canvasGo.GetComponent<Canvas>();
-            _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            var scaler = canvasGo.GetComponent<CanvasScaler>();
+            if (canvas == null)
+            {
+                var canvasGo = new GameObject("GridCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler));
+                canvas = canvasGo.GetComponent<Canvas>();
+            }
+
+            canvas.transform.SetParent(null, true);
+            canvas.renderMode = RenderMode.ScreenSpaceCamera;
+            if (canvasCamera == null)
+            {
+                canvasCamera = Camera.main;
+                if (canvasCamera == null)
+                {
+                    var cameraObject = new GameObject("Main Camera");
+                    cameraObject.tag = "MainCamera";
+                    canvasCamera = cameraObject.AddComponent<Camera>();
+                    canvasCamera.orthographic = true;
+                }
+            }
+            canvas.worldCamera = canvasCamera;
+            canvas.planeDistance = Mathf.Max(canvasPlaneDistance, canvasCamera.nearClipPlane + 0.01f);
+
+            var scaler = canvas.GetComponent<CanvasScaler>();
+            if (scaler == null) scaler = canvas.gameObject.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = referenceResolution;
             scaler.matchWidthOrHeight = 0.5f;
 
             var vp = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D), typeof(Image));
             _viewport = vp.GetComponent<RectTransform>();
-            _viewport.SetParent(canvasGo.transform, false);
+            _viewport.SetParent(canvas.transform, false);
             Stretch(_viewport);
             var bg = vp.GetComponent<Image>();
             bg.color = backgroundColor;
@@ -219,7 +240,7 @@ namespace Demo.Gameplay
                 }
                 if (_dragged)
                 {
-                    _content.anchoredPosition += (screen - _lastScreen) / _canvas.scaleFactor;
+                    _content.anchoredPosition += (screen - _lastScreen) / canvas.scaleFactor;
                     _lastScreen = screen;
                 }
             }
@@ -238,8 +259,8 @@ namespace Demo.Gameplay
             if (Mathf.Abs(scroll) < 0.001f) return;
 
             Vector2 screen = mouse.position.ReadValue();
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_content, screen, null, out var before)) return;
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(_viewport, screen, null, out var inViewport);
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_content, screen, canvasCamera, out var before)) return;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(_viewport, screen, canvasCamera, out var inViewport);
 
             _zoom = Mathf.Clamp(_zoom * (1f + Mathf.Sign(scroll) * zoomStep), minZoom, maxZoom);
             _content.localScale = Vector3.one * _zoom;
@@ -271,7 +292,7 @@ namespace Demo.Gameplay
 
         private void TryClick(Vector2 screen)
         {
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_content, screen, null, out var local)) return;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_content, screen, canvasCamera, out var local)) return;
             int x = Mathf.FloorToInt(local.x / cellSizePx);
             int y = Mathf.FloorToInt(local.y / cellSizePx);
             if (x < 0 || y < 0 || x >= _width || y >= _height) return;
