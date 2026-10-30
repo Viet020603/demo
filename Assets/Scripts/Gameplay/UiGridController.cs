@@ -33,6 +33,12 @@ namespace Demo.Gameplay
         [SerializeField] private Color backgroundColor = new Color(0.12f, 0.2f, 0.12f, 1f);
         [SerializeField, Range(0.5f, 1f)] private float cellFill = 0.95f;
 
+        [Header("Map background (pans and zooms with the grid)")]
+        [Tooltip("Empty = loads Resources/Sprite/dat.")]
+        [SerializeField] private Sprite backgroundSprite;
+        [SerializeField] private Image mapBackground;
+        [SerializeField] private string backgroundResource = "Sprite/dat";
+
         [Header("Camera (drag / zoom)")]
         [SerializeField] private float dragThresholdPixels = 6f;
         [SerializeField] private float minZoom = 0.5f;
@@ -177,6 +183,8 @@ namespace Demo.Gameplay
             content.pivot = Vector2.zero;
             content.sizeDelta = new Vector2(_width * cellSizePx, _height * cellSizePx);
 
+            SetupBackground();
+
             if (selectionMarker == null)
             {
                 var mk = new GameObject("SelectionMarker", typeof(RectTransform), typeof(Image));
@@ -191,6 +199,28 @@ namespace Demo.Gameplay
             mi.color = selectionColor;
             mi.raycastTarget = false;
             selectionMarker.gameObject.SetActive(false);
+        }
+
+        private void SetupBackground()
+        {
+            if (backgroundSprite == null && !string.IsNullOrEmpty(backgroundResource))
+                backgroundSprite = Resources.Load<Sprite>(backgroundResource);
+
+            if (mapBackground == null)
+            {
+                if (backgroundSprite == null) return;
+                var go = new GameObject("MapBackground", typeof(RectTransform), typeof(Image));
+                mapBackground = go.GetComponent<Image>();
+            }
+
+            var rt = mapBackground.rectTransform;
+            rt.SetParent(content, false);
+            Stretch(rt);
+            rt.SetAsFirstSibling();
+            if (backgroundSprite != null) mapBackground.sprite = backgroundSprite;
+            mapBackground.type = Image.Type.Simple;
+            mapBackground.preserveAspect = false;
+            mapBackground.raycastTarget = false;
         }
 
         private static void Stretch(RectTransform rt)

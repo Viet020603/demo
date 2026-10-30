@@ -10,6 +10,7 @@ namespace Demo.Editor
     {
         private const string PrefabFolder = "Assets/Prefabs";
         private const string CellPrefabPath = PrefabFolder + "/UICell.prefab";
+        private const string BackgroundSpritePath = "Assets/Resources/Sprite/dat.png";
         private const string CanvasPrefabPath = PrefabFolder + "/GridCanvas.prefab";
 
         [MenuItem("Tools/Grid Demo/Create Canvas Prefabs and Scene Instance")]
@@ -101,6 +102,16 @@ namespace Demo.Editor
             content.anchorMin = content.anchorMax = Vector2.zero;
             content.pivot = Vector2.zero;
 
+            var backgroundObject = new GameObject("MapBackground", typeof(RectTransform), typeof(Image));
+            var backgroundRect = backgroundObject.GetComponent<RectTransform>();
+            backgroundRect.SetParent(content, false);
+            backgroundRect.anchorMin = Vector2.zero;
+            backgroundRect.anchorMax = Vector2.one;
+            backgroundRect.offsetMin = backgroundRect.offsetMax = Vector2.zero;
+            var backgroundImage = backgroundObject.GetComponent<Image>();
+            backgroundImage.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(BackgroundSpritePath);
+            backgroundImage.raycastTarget = false;
+
             var markerObject = new GameObject("SelectionMarker", typeof(RectTransform), typeof(Image));
             var marker = markerObject.GetComponent<RectTransform>();
             marker.SetParent(content, false);
@@ -117,6 +128,8 @@ namespace Demo.Editor
             serializedController.FindProperty("canvas").objectReferenceValue = canvas;
             serializedController.FindProperty("viewport").objectReferenceValue = viewport;
             serializedController.FindProperty("content").objectReferenceValue = content;
+            serializedController.FindProperty("mapBackground").objectReferenceValue = backgroundImage;
+            serializedController.FindProperty("backgroundSprite").objectReferenceValue = backgroundImage.sprite;
             serializedController.FindProperty("selectionMarker").objectReferenceValue = marker;
             serializedController.FindProperty("cellPrefab").objectReferenceValue = cellPrefab;
             serializedController.ApplyModifiedPropertiesWithoutUndo();
