@@ -38,3 +38,10 @@ JSON format:
 - `PopupBase` (abstract: `Init`, `Show`, `Close`, `Dispose`) is the base for popups; it reports open/close to `GameManager`.
 - `UiGridController` now derives from `PopupBase`. It is built in `Init` but stays hidden until `Show`.
 - `UiManager` creates a **START** button (or use your own: assign `Start Button` / `Grid Popup`). Pressing it hides the button and opens the grid. `Esc` closes the grid and shows the button again.
+
+## ScrollRect + clickable cells
+
+- The viewport has a `ScrollRect` (drag with inertia / elastic edges; toggle `Inertia`). The mouse wheel zooms `Content` instead of scrolling.
+- Every visible cell is a pooled `Button` (`UICell.prefab` has `Button` + `Image`). Clicking a cell moves the orange marker and logs/raises `CellIdClicked(id)`. Hook your own logic there or edit the cell prefab.
+- Needs an `EventSystem` (created by `UiManager`) and a `GraphicRaycaster` on the canvas (added automatically).
+- Regenerate `GridCanvas.prefab` / `UICell.prefab` (delete them, run the menu) to pick up the new components; the runtime fallback adds missing ones anyway.

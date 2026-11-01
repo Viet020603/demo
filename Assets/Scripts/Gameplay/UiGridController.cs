@@ -12,8 +12,8 @@ namespace Demo.Gameplay
     /// <summary>
     /// uGUI version of the grid. The Canvas is a standalone scene root:
     /// Canvas > Viewport (RectMask2D) > Content (map). Drag moves Content, wheel zooms it.
-    /// Only the cells inside the viewport are active (pooled UI Images, reused while panning).
-    /// Cells never receive raycasts: clicks are resolved with math, so any of the cells is clickable.
+    /// Viewport carries a ScrollRect (drag with inertia); the wheel zooms Content.
+    /// Only the cells inside the viewport are active (pooled UI Buttons, reused while panning).
     /// </summary>
     public class UiGridController : PopupBase
     {
@@ -54,7 +54,10 @@ namespace Demo.Gameplay
         [SerializeField] private bool fitMapOnStart = true;
 
         [Header("Camera (drag / zoom)")]
-        [SerializeField] private float dragThresholdPixels = 6f;
+        [SerializeField] private ScrollRect scrollRect;
+        [Tooltip("Inertia + elastic edges when dragging, like a normal ScrollRect.")]
+        [SerializeField] private bool inertia = true;
+        [SerializeField, Min(0.001f)] private float decelerationRate = 0.135f;
         [SerializeField] private float minZoom = 0.2f;
         [SerializeField] private float maxZoom = 2f;
         [SerializeField] private float startZoom = 1f;
@@ -100,8 +103,6 @@ namespace Demo.Gameplay
         private RectInt _lastVisible = new RectInt(-1, -1, 0, 0);
 
         private float _zoom = 1f;
-        private bool _pressed, _dragged;
-        private Vector2 _pressScreen, _lastScreen;
 
         private bool _initialized, _needFit;
 
@@ -138,8 +139,7 @@ namespace Demo.Gameplay
 
         public override void Close()
         {
-            _pressed = false;
-            _dragged = false;
+            if (scrollRect != null) scrollRect.StopMovement();
             gameObject.SetActive(false);
             if (canvas != null) canvas.gameObject.SetActive(false);
         }
@@ -240,7 +240,9 @@ namespace Demo.Gameplay
             var bg = viewport.GetComponent<Image>();
             if (bg == null) bg = viewport.gameObject.AddComponent<Image>();
             bg.color = backgroundColor;
-            bg.raycastTarget = false;
+            bg.raycastTarget = true; // the ScrollRect receives drags through this Graphic
+
+            if (canvas.GetComponent<GraphicRaycaster>() == null) canvas.gameObject.AddComponent<GraphicRaycaster>();
 
             if (content == null)
             {
@@ -272,6 +274,22 @@ namespace Demo.Gameplay
             mi.color = selectionColor;
             mi.raycastTarget = false;
             selectionMarker.gameObject.SetActive(false);
+
+            SetupScrollRect();
+        }
+
+        private void SetupScrollRect()
+        {
+            if (scrollRect == null) scrollRect = viewport.GetComponent<ScrollRect>();
+            if (scrollRect == null) scrollRect = viewport.gameObject.AddComponent<ScrollRect>();
+
+            scrollRect.content = content;
+            scrollRect.viewport = viewport;
+            scrollRect.horizontal = scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Elastic;
+            scrollRect.inertia = inertia;
+            scrollRect.decelerationRate = decelerationRate;
+            scrollRect.scrollSensitivity = 0f; // the wheel zooms instead of scrolling
         }
 
         private void SetupBackground()
@@ -359,48 +377,9 @@ namespace Demo.Gameplay
             }
 
             var mouse = Mouse.current;
-            if (mouse != null)
-            {
-                HandleDrag(mouse);
-                HandleZoom(mouse);
-            }
+            if (mouse != null) HandleZoom(mouse);
 
-            ClampContent();
             RefreshVisible(false);
-        }
-
-        private void HandleDrag(Mouse mouse)
-        {
-            Vector2 screen = mouse.position.ReadValue();
-
-            if (mouse.leftButton.wasPressedThisFrame || mouse.middleButton.wasPressedThisFrame)
-            {
-                _pressed = true;
-                _dragged = false;
-                _pressScreen = _lastScreen = screen;
-            }
-
-            bool held = mouse.leftButton.isPressed || mouse.middleButton.isPressed;
-            if (_pressed && held)
-            {
-                if (!_dragged && (screen - _pressScreen).sqrMagnitude > dragThresholdPixels * dragThresholdPixels)
-                {
-                    _dragged = true;
-                    _lastScreen = screen;
-                }
-                if (_dragged)
-                {
-                    content.anchoredPosition += (screen - _lastScreen) / canvas.scaleFactor;
-                    _lastScreen = screen;
-                }
-            }
-
-            if (_pressed && !held)
-            {
-                if (!_dragged && mouse.leftButton.wasReleasedThisFrame)
-                    TryClick(screen);
-                _pressed = false;
-            }
         }
 
         private void HandleZoom(Mouse mouse)
@@ -412,12 +391,14 @@ namespace Demo.Gameplay
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screen, canvasCamera, out var before)) return;
             RectTransformUtility.ScreenPointToLocalPointInRectangle(viewport, screen, canvasCamera, out var inViewport);
 
+            scrollRect.StopMovement();
             _zoom = Mathf.Clamp(_zoom * (1f + Mathf.Sign(scroll) * zoomStep), minZoom, maxZoom);
             content.localScale = Vector3.one * _zoom;
 
             // keep the point under the cursor fixed; viewport local space has its pivot at the center
             Vector2 vpFromBottomLeft = inViewport + viewport.rect.size * 0.5f;
             content.anchoredPosition = vpFromBottomLeft - before * _zoom;
+            ClampContent();
         }
 
         private void ClampContent()
@@ -444,24 +425,15 @@ namespace Demo.Gameplay
 
         // -------------------------------------------------------------- click
 
-        private void TryClick(Vector2 screen)
+        private void OnCellClicked(CellView view)
         {
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screen, canvasCamera, out var local)) return;
-            local -= GridOrigin;
-            int x = Mathf.FloorToInt(local.x / cellSizePx);
-            int y = Mathf.FloorToInt(local.y / cellSizePx);
-            if (x < 0 || y < 0 || x >= _width || y >= _height) return;
-
             selectionMarker.gameObject.SetActive(true);
-            selectionMarker.anchoredPosition = CellCenter(x, y);
+            selectionMarker.anchoredPosition = CellCenter(view.Cx - 1, view.Cy - 1);
             selectionMarker.SetAsLastSibling();
 
-            int idx = y * _width + x;
-            int id = _idByIndex[idx];
-            if (id == 0) return;
             if (logClicks)
-                Debug.Log($"Clicked cell id = {id}  (cx={x + 1}, cy={y + 1}, maLoai={_typeByIndex[idx]})");
-            CellIdClicked?.Invoke(id);
+                Debug.Log($"Clicked cell id = {view.Id}  (cx={view.Cx}, cy={view.Cy}, maLoai={view.MaLoai})");
+            CellIdClicked?.Invoke(view.Id);
         }
 
         private Vector2 CellCenter(int x, int y) =>
@@ -543,10 +515,18 @@ namespace Demo.Gameplay
             rt.anchorMin = rt.anchorMax = Vector2.zero;
             rt.pivot = new Vector2(0.5f, 0.5f);
 
-            foreach (var g in go.GetComponentsInChildren<Graphic>(true)) g.raycastTarget = false;
-
             var view = go.GetComponent<CellView>();
             if (view == null) view = go.AddComponent<CellView>();
+
+            var rootGraphic = go.GetComponent<Graphic>();
+            if (rootGraphic == null) rootGraphic = go.AddComponent<Image>();
+            foreach (var g in go.GetComponentsInChildren<Graphic>(true)) g.raycastTarget = g == rootGraphic;
+
+            var button = go.GetComponent<Button>();
+            if (button == null) button = go.AddComponent<Button>();
+            button.targetGraphic = rootGraphic;
+            button.navigation = new Navigation { mode = Navigation.Mode.None };
+            button.onClick.AddListener(() => OnCellClicked(view));
             return view;
         }
 

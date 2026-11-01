@@ -54,8 +54,11 @@ namespace Demo.Editor
 
             var root = new GameObject("UICell", typeof(RectTransform), typeof(Image), typeof(CellView));
             var image = root.GetComponent<Image>();
-            image.raycastTarget = false;
+            image.raycastTarget = true;
             image.color = Color.white;
+            var cellButton = root.AddComponent<Button>();
+            cellButton.targetGraphic = image;
+            cellButton.navigation = new Navigation { mode = Navigation.Mode.None };
 
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, CellPrefabPath);
             Object.DestroyImmediate(root);
@@ -72,6 +75,7 @@ namespace Demo.Editor
                 typeof(RectTransform),
                 typeof(Canvas),
                 typeof(CanvasScaler),
+                typeof(GraphicRaycaster),
                 typeof(UiGridController));
 
             var canvas = root.GetComponent<Canvas>();
@@ -86,7 +90,8 @@ namespace Demo.Editor
                 "Viewport",
                 typeof(RectTransform),
                 typeof(RectMask2D),
-                typeof(Image));
+                typeof(Image),
+                typeof(ScrollRect));
             var viewport = viewportObject.GetComponent<RectTransform>();
             viewport.SetParent(root.transform, false);
             viewport.anchorMin = Vector2.zero;
@@ -94,7 +99,7 @@ namespace Demo.Editor
             viewport.offsetMin = viewport.offsetMax = Vector2.zero;
             var background = viewportObject.GetComponent<Image>();
             background.color = new Color(0.12f, 0.2f, 0.12f, 1f);
-            background.raycastTarget = false;
+            background.raycastTarget = true;
 
             var contentObject = new GameObject("Content", typeof(RectTransform));
             var content = contentObject.GetComponent<RectTransform>();
@@ -142,6 +147,7 @@ namespace Demo.Editor
             var controller = root.GetComponent<UiGridController>();
             var serializedController = new SerializedObject(controller);
             serializedController.FindProperty("canvas").objectReferenceValue = canvas;
+            serializedController.FindProperty("scrollRect").objectReferenceValue = viewportObject.GetComponent<ScrollRect>();
             serializedController.FindProperty("viewport").objectReferenceValue = viewport;
             serializedController.FindProperty("content").objectReferenceValue = content;
             serializedController.FindProperty("mapBackground").objectReferenceValue = backgroundImage;
