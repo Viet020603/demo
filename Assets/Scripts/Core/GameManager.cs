@@ -8,7 +8,6 @@ namespace Demo.Gameplay
         public static GameManager Instance { get; private set; }
 
         public int OpenPopupCount { get; private set; }
-        public bool IsPopupOpen => OpenPopupCount > 0;
 
         private void Awake()
         {
