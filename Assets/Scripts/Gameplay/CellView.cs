@@ -1,10 +1,9 @@
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace Demo.Gameplay
 {
-    /// <summary>
-    /// Attached to every cell prefab instance. Holds the id coming from the JSON file.
-    /// </summary>
+    /// <summary>Attached to every cell prefab instance. Holds the data coming from the JSON file.</summary>
     public class CellView : MonoBehaviour
     {
         public int Id;
@@ -12,9 +11,7 @@ namespace Demo.Gameplay
         public int Cx;
         public int Cy;
 
-        private Renderer _renderer;
-        private MaterialPropertyBlock _block;
-        private static readonly int ColorId = Shader.PropertyToID("_Color");
+        private Graphic _graphic;
 
         public void Bind(int id, int maLoai, int cx, int cy, Color color)
         {
@@ -24,12 +21,8 @@ namespace Demo.Gameplay
             Cy = cy;
             gameObject.name = "Cell_" + id;
 
-            if (_renderer == null) _renderer = GetComponentInChildren<Renderer>();
-            if (_renderer == null) return;
-            if (_block == null) _block = new MaterialPropertyBlock();
-            _renderer.GetPropertyBlock(_block);
-            _block.SetColor(ColorId, color);
-            _renderer.SetPropertyBlock(_block);
+            if (_graphic == null) _graphic = GetComponentInChildren<Graphic>();
+            if (_graphic != null) _graphic.color = color;
         }
     }
 }

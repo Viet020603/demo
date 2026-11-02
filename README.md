@@ -1,33 +1,47 @@
 # Unity Grid Strategy Demo (31x31, JSON driven)
 
-Unity version: **6000.3.20f1** · new Input System.
+Unity version: **6000.3.20f1** · new Input System · uGUI Canvas.
 
-## Map from JSON
-1. Copy your **`o_ban_do.json`** into **`Assets/Resources/o_ban_do.json`**
-   (or drag it into the `Map File` field of `GridController`).
-2. Press Play.
+## Run
+1. Copy `o_ban_do.json` into `Assets/Resources/o_ban_do.json`.
+2. Open the project in Unity and press Play.
 
-JSON format (array):
+JSON format:
 ```json
 [ { "id": 101, "maLoai": 4, "cx": 1, "cy": 1 }, ... ]
 ```
-- `cx` = column, `cy` = row (1-based), `id` = unique cell id, `maLoai` = cell type.
-- Grid size is detected automatically from the max `cx` / `cy`.
+- `cx` is the column, `cy` is the row (both 1-based).
+- Grid size is detected automatically from the largest `cx` and `cy`.
 
-## How it works
-- Every cell in the JSON is a **prefab instance (`CellView`) bound to its `id`**.
-- To stay fast, only cells inside the camera view are instantiated; they are pooled and reused while panning, and re-bound to the new cell's id.
-- Pool size is computed from the real camera size at runtime.
-- **Click a cell -> Console prints** `Clicked cell id = 101 (cx=1, cy=1, maLoai=4)`.
-- Subscribe in code: `gridController.CellIdClicked += id => { ... }`.
-
-## Custom prefab / colors
-- Assign `placePrefab` on `GridController` to use your own cell prefab (a `CellView` is added if missing).
-- `typeColors` sets the color per `maLoai` (index = maLoai).
+## Canvas and grid
+- In the Unity Editor, run **Tools > Grid Demo > Create Canvas Prefabs and Scene Instance** before Play. This creates `Assets/Prefabs/GridCanvas.prefab` and `Assets/Prefabs/UICell.prefab`, then adds a `GridCanvas` prefab instance to the open scene.
+- The Canvas prefab is a standalone scene root with editable `Viewport`, `Content`, and `SelectionMarker` children, plus the `UiGridController` settings. Adjust the prefab or scene instance before Play.
+- Canvas render mode is **Screen Space - Camera**. The controller uses its assigned `Canvas Camera`, otherwise `MainCamera` (and creates one if needed).
+- The Canvas hierarchy is `GridCanvas > Viewport > Content > SelectionMarker`. Only visible cell views are active; views leaving the viewport are reused while panning.
+- `Content > MapBackground` shows `Assets/Resources/Sprite/dat.png` and pans/zooms with the grid. Replace it via `Background Sprite` on `UiGridController` (or the `MapBackground` Image in the prefab); when empty, `Resources/Sprite/dat` is loaded.
+- Layout matches the reference: `Content` = grid + `Border Cells` (default 4) on every side. The ground covers it all, the 31x31 grid is drawn in the middle as `GridLines` (one mesh, one draw call; color/thickness are editable), and cells are transparent (`Cell Tint Alpha` = 0) so only icons and the orange selection show.
+- `Content > MapFrame` is an optional decorative frame (trees, clouds, water) with a transparent center. Assign your sprite to its Image (it enables itself when a sprite is set); it is drawn above the ground and below the grid.
+- The camera starts zoomed out to fit the whole map (`Fit Map On Start`); drag and wheel zoom stay clamped to the map edges.
+- To show icons on cells, put them in a child Image of the cell prefab; the root Image receives the per-type tint.
+- `UICell.prefab` is the pooled cell template. Edit its `Image` or add UI components, then assign it in `UiGridController`'s `Cell Prefab` field if needed.
+- If the prefab builder has not been run, the controller retains a runtime fallback that creates the Canvas hierarchy and simple Image cells.
+- Cells are clickable via coordinate conversion without a collider or raycast. Clicking logs the cell `id`, coordinates, and type.
+- The `CellIdClicked` event exposes the clicked id to other scripts.
 
 ## Controls
-- Left drag / middle drag: pan camera
-- Left click (no drag): select + log id
-- Mouse wheel: zoom
+- Left or middle mouse drag: pan the grid.
+- Left click without dragging: select a cell.
+- Mouse wheel: zoom around the cursor.
 
-Gizmos: red = map, cyan = camera view, yellow = culling area.
+## Start button / popup flow
+
+- `PopupBase` (abstract: `Init`, `Show`, `Close`, `Dispose`) is the base for popups; it reports open/close to `GameManager`.
+- `UiGridController` now derives from `PopupBase`. It is built in `Init` but stays hidden until `Show`.
+- `UiManager` creates a **START** button (or use your own: assign `Start Button` / `Grid Popup`). Pressing it hides the button and opens the grid. `Esc` closes the grid and shows the button again.
+
+## ScrollRect + clickable cells
+
+- The viewport has a `ScrollRect` (drag with inertia / elastic edges; toggle `Inertia`). The mouse wheel zooms `Content` instead of scrolling.
+- Every visible cell is a pooled `Button` (`UICell.prefab` has `Button` + `Image`). Clicking a cell moves the orange marker and logs/raises `CellIdClicked(id)`. Hook your own logic there or edit the cell prefab.
+- Needs an `EventSystem` (created by `UiManager`) and a `GraphicRaycaster` on the canvas (added automatically).
+- Regenerate `GridCanvas.prefab` / `UICell.prefab` (delete them, run the menu) to pick up the new components; the runtime fallback adds missing ones anyway.
