@@ -16,11 +16,11 @@ namespace Demo.Gameplay
         [Tooltip("Parent of every popup (like panelUiInGame). Empty = the first Canvas found in the scene.")]
         [SerializeField] private Transform panelUiInGame;
         [Tooltip("Empty = Resources/" + PopupGridResourcePath)]
-        [SerializeField] private UiGridController popupGridPrefab;
+        [SerializeField] private PopupLoan12SQ popupGridPrefab;
         [SerializeField] private Button startButton;
         [SerializeField] private string startLabel = "START";
 
-        private UiGridController popupGrid;
+        private PopupLoan12SQ popupGrid;
 
         private void Awake()
         {
@@ -38,13 +38,13 @@ namespace Demo.Gameplay
             if (popupGrid != null) popupGrid.Dispose();
         }
 
-        private UiGridController GetPopupGrid()
+        private PopupLoan12SQ GetPopupGrid()
         {
             if (popupGrid == null)
             {
                 var prefab = popupGridPrefab != null
                     ? popupGridPrefab
-                    : Resources.Load<UiGridController>(PopupGridResourcePath);
+                    : Resources.Load<PopupLoan12SQ>(PopupGridResourcePath);
 
                 if (prefab != null)
                 {
@@ -54,7 +54,7 @@ namespace Demo.Gameplay
                 {
                     var go = new GameObject("PopupGrid", typeof(RectTransform));
                     go.transform.SetParent(panelUiInGame, false);
-                    popupGrid = go.AddComponent<UiGridController>();
+                    popupGrid = go.AddComponent<PopupLoan12SQ>();
                 }
                 popupGrid.Init(this);
             }

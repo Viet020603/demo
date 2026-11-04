@@ -15,7 +15,7 @@ namespace Demo.Gameplay
     /// Viewport carries a ScrollRect (drag with inertia); the wheel zooms Content.
     /// Only the cells inside the viewport are active (pooled UI Buttons, reused while panning).
     /// </summary>
-    public class UiGridController : PopupBase
+    public class PopupLoan12SQ : PopupBase
     {
         [Header("Map data (o_ban_do.json)")]
         [SerializeField] private TextAsset mapFile;
@@ -169,7 +169,7 @@ namespace Demo.Gameplay
             TextAsset asset = mapFile != null ? mapFile : Resources.Load<TextAsset>(resourceName);
             if (asset == null)
             {
-                Debug.LogError($"[UiGridController] Map json not found. Put '{resourceName}.json' in Assets/Resources/ or assign it to 'Map File'.");
+                Debug.LogError($"[PopupLoan12SQ] Map json not found. Put '{resourceName}.json' in Assets/Resources/ or assign it to 'Map File'.");
                 _idByIndex = new int[_width * _height];
                 _typeByIndex = new byte[_width * _height];
                 return;
@@ -195,7 +195,7 @@ namespace Demo.Gameplay
                 _idByIndex[idx] = c.id;
                 _typeByIndex[idx] = (byte)Mathf.Clamp(c.maLoai, 0, 255);
             }
-            Debug.Log($"[UiGridController] Loaded {cells.Length} cells ({_width}x{_height}).");
+            Debug.Log($"[PopupLoan12SQ] Loaded {cells.Length} cells ({_width}x{_height}).");
         }
 
         private Camera UiCamera
@@ -590,4 +590,3 @@ namespace Demo.Gameplay
 }
 
    
-

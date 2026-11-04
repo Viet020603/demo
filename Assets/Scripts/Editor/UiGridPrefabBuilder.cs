@@ -46,7 +46,7 @@ namespace Demo.Editor
             var existing = AssetDatabase.LoadAssetAtPath<GameObject>(PopupPrefabPath);
             if (existing != null) return existing;
 
-            var root = new GameObject("PopupGrid", typeof(RectTransform), typeof(UiGridController));
+            var root = new GameObject("PopupGrid", typeof(RectTransform), typeof(PopupLoan12SQ));
             var rootRect = root.GetComponent<RectTransform>();
             rootRect.anchorMin = Vector2.zero;
             rootRect.anchorMax = Vector2.one;
@@ -132,7 +132,7 @@ namespace Demo.Editor
             label.raycastTarget = false;
             label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-            var controller = root.GetComponent<UiGridController>();
+            var controller = root.GetComponent<PopupLoan12SQ>();
             var serializedController = new SerializedObject(controller);
             serializedController.FindProperty("btnClose").objectReferenceValue = closeObject.GetComponent<Button>();
             serializedController.FindProperty("scrollRect").objectReferenceValue = viewportObject.GetComponent<ScrollRect>();
