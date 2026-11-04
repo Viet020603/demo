@@ -9,8 +9,9 @@ using UnityEngine.UI;
 namespace Demo.Gameplay
 {
     /// <summary>
-    /// uGUI version of the grid. The Canvas is a standalone scene root:
-    /// Canvas > Viewport (RectMask2D) > Content (map). Drag moves Content, wheel zooms it.
+    /// Grid popup (same pattern as the other popups): UiManager instantiates the prefab under its UI panel,
+    /// calls Init once, then Show / Close. It never creates or changes a Canvas or Camera.
+    /// Popup > Viewport (ScrollRect + RectMask2D) > Content (map). Drag moves Content, wheel zooms it.
     /// Viewport carries a ScrollRect (drag with inertia); the wheel zooms Content.
     /// Only the cells inside the viewport are active (pooled UI Buttons, reused while panning).
     /// </summary>
@@ -20,14 +21,11 @@ namespace Demo.Gameplay
         [SerializeField] private TextAsset mapFile;
         [SerializeField] private string resourceName = "o_ban_do";
 
-        [Header("Canvas")]
-        [SerializeField] private Canvas canvas;
-        [SerializeField] private Camera canvasCamera;
+        [Header("Popup layout (lives under an existing Canvas; no Canvas/Camera is created or changed)")]
+        [SerializeField] private Button btnClose;
         [SerializeField] private RectTransform viewport;
         [SerializeField] private RectTransform content;
         [SerializeField] private RectTransform selectionMarker;
-        [SerializeField] private float canvasPlaneDistance = 1f;
-        [SerializeField] private Vector2 referenceResolution = new Vector2(1920f, 1080f);
         [SerializeField] private float cellSizePx = 64f;
         [Tooltip("Cell prefab (needs a Graphic such as Image). Empty = auto-created Image.")]
         [SerializeField] private GameObject cellPrefab;
@@ -112,14 +110,15 @@ namespace Demo.Gameplay
             _initialized = true;
 
             LoadMap();
-            BuildCanvas();
+            BuildLayout();
+            if (btnClose != null) btnClose.onClick.AddListener(Close);
             _needFit = true;
         }
 
         public override void Show()
         {
             gameObject.SetActive(true);
-            if (canvas != null) canvas.gameObject.SetActive(true);
+            transform.localPosition = Vector3.zero;
             if (!_initialized) return;
 
             if (_needFit)
@@ -140,7 +139,7 @@ namespace Demo.Gameplay
         {
             if (scrollRect != null) scrollRect.StopMovement();
             gameObject.SetActive(false);
-            if (canvas != null) canvas.gameObject.SetActive(false);
+            uiManager?.OnGridClosed();
         }
 
         public override void Dispose()
@@ -152,7 +151,7 @@ namespace Demo.Gameplay
                 var cell = _free.Pop();
                 if (cell != null) Destroy(cell.gameObject);
             }
-            if (canvas != null && canvas.gameObject != gameObject) Destroy(canvas.gameObject);
+            if (btnClose != null) btnClose.onClick.RemoveListener(Close);
             _initialized = false;
         }
 
@@ -199,49 +198,34 @@ namespace Demo.Gameplay
             Debug.Log($"[UiGridController] Loaded {cells.Length} cells ({_width}x{_height}).");
         }
 
-        private void BuildCanvas()
+        private Camera UiCamera
         {
-            if (canvas == null)
+            get
             {
-                var canvasGo = new GameObject("GridCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler));
-                canvas = canvasGo.GetComponent<Canvas>();
+                var root = GetComponentInParent<Canvas>();
+                if (root == null) return null;
+                root = root.rootCanvas;
+                return root.renderMode == RenderMode.ScreenSpaceOverlay ? null : root.worldCamera;
             }
+        }
 
-            canvas.transform.SetParent(null, true);
-            canvas.renderMode = RenderMode.ScreenSpaceCamera;
-            if (canvasCamera == null)
-            {
-                canvasCamera = Camera.main;
-                if (canvasCamera == null)
-                {
-                    var cameraObject = new GameObject("Main Camera");
-                    cameraObject.tag = "MainCamera";
-                    canvasCamera = cameraObject.AddComponent<Camera>();
-                    canvasCamera.orthographic = true;
-                }
-            }
-            canvas.worldCamera = canvasCamera;
-            canvas.planeDistance = Mathf.Max(canvasPlaneDistance, canvasCamera.nearClipPlane + 0.01f);
-
-            var scaler = canvas.GetComponent<CanvasScaler>();
-            if (scaler == null) scaler = canvas.gameObject.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = referenceResolution;
-            scaler.matchWidthOrHeight = 0.5f;
+        private void BuildLayout()
+        {
+            var self = (RectTransform)transform;
+            Stretch(self);
 
             if (viewport == null)
             {
                 var vp = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D), typeof(Image));
                 viewport = vp.GetComponent<RectTransform>();
             }
-            viewport.SetParent(canvas.transform, false);
+            viewport.SetParent(self, false);
+            viewport.SetAsFirstSibling();
             Stretch(viewport);
             var bg = viewport.GetComponent<Image>();
             if (bg == null) bg = viewport.gameObject.AddComponent<Image>();
             bg.color = backgroundColor;
             bg.raycastTarget = true; // the ScrollRect receives drags through this Graphic
-
-            if (canvas.GetComponent<GraphicRaycaster>() == null) canvas.gameObject.AddComponent<GraphicRaycaster>();
 
             if (content == null)
             {
@@ -275,6 +259,35 @@ namespace Demo.Gameplay
             selectionMarker.gameObject.SetActive(false);
 
             SetupScrollRect();
+            SetupCloseButton();
+        }
+
+        private void SetupCloseButton()
+        {
+            if (btnClose == null)
+            {
+                var go = new GameObject("BtnClose", typeof(RectTransform), typeof(Image), typeof(Button));
+                var rt = (RectTransform)go.transform;
+                rt.SetParent(transform, false);
+                rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(1f, 1f);
+                rt.anchoredPosition = new Vector2(-20f, -20f);
+                rt.sizeDelta = new Vector2(90f, 90f);
+                go.GetComponent<Image>().color = new Color(0.75f, 0.2f, 0.2f, 1f);
+                btnClose = go.GetComponent<Button>();
+
+                var tgo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+                var trt = (RectTransform)tgo.transform;
+                trt.SetParent(rt, false);
+                Stretch(trt);
+                var t = tgo.GetComponent<Text>();
+                t.text = "X";
+                t.alignment = TextAnchor.MiddleCenter;
+                t.fontSize = 48;
+                t.color = Color.white;
+                t.raycastTarget = false;
+                t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            }
+            btnClose.transform.SetAsLastSibling();
         }
 
         private void SetupScrollRect()
@@ -371,7 +384,6 @@ namespace Demo.Gameplay
             if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
             {
                 Close();
-                uiManager?.OnGridClosed();
                 return;
             }
 
@@ -387,8 +399,8 @@ namespace Demo.Gameplay
             if (Mathf.Abs(scroll) < 0.001f) return;
 
             Vector2 screen = mouse.position.ReadValue();
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screen, canvasCamera, out var before)) return;
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(viewport, screen, canvasCamera, out var inViewport);
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screen, UiCamera, out var before)) return;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(viewport, screen, UiCamera, out var inViewport);
 
             scrollRect.StopMovement();
             _zoom = Mathf.Clamp(_zoom * (1f + Mathf.Sign(scroll) * zoomStep), minZoom, maxZoom);

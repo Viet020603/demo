@@ -1,6 +1,5 @@
 using Demo.Gameplay;
 using UnityEditor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -11,40 +10,17 @@ namespace Demo.Editor
         private const string PrefabFolder = "Assets/Prefabs";
         private const string CellPrefabPath = PrefabFolder + "/UICell.prefab";
         private const string BackgroundSpritePath = "Assets/Resources/Sprite/dat.png";
-        private const string CanvasPrefabPath = PrefabFolder + "/GridCanvas.prefab";
+        private const string PopupFolder = "Assets/Resources/UI/Popup/Grid";
+        private const string PopupPrefabPath = PopupFolder + "/PopupGrid.prefab";
 
-        [MenuItem("Tools/Grid Demo/Create Canvas Prefabs and Scene Instance")]
-        public static void CreateCanvasPrefabsAndSceneInstance()
+        [MenuItem("Tools/Grid Demo/Create Popup Prefabs")]
+        public static void CreatePopupPrefabs()
         {
-            EnsurePrefabFolder();
+            EnsureFolders();
             GameObject cellPrefab = CreateCellPrefab();
-            GameObject canvasPrefab = CreateCanvasPrefab(cellPrefab);
-
-            var existing = Object.FindFirstObjectByType<UiGridController>();
-            if (existing != null)
-            {
-                Selection.activeGameObject = existing.gameObject;
-                Debug.Log("Canvas prefabs were created. A UiGridController already exists in this scene, so no duplicate instance was added.");
-                return;
-            }
-
-            var instance = (GameObject)PrefabUtility.InstantiatePrefab(canvasPrefab);
-            var controller = instance.GetComponent<UiGridController>();
-            var camera = Camera.main;
-            if (camera != null)
-            {
-                var canvas = instance.GetComponent<Canvas>();
-                canvas.worldCamera = camera;
-
-                var serializedController = new SerializedObject(controller);
-                serializedController.FindProperty("canvasCamera").objectReferenceValue = camera;
-                serializedController.ApplyModifiedPropertiesWithoutUndo();
-            }
-
-            Undo.RegisterCreatedObjectUndo(instance, "Create Canvas Grid");
-            Selection.activeGameObject = instance;
-            EditorSceneManager.MarkSceneDirty(instance.scene);
-            Debug.Log($"Created prefab assets at '{CanvasPrefabPath}' and '{CellPrefabPath}', and added GridCanvas to the open scene.");
+            GameObject popupPrefab = CreatePopupPrefab(cellPrefab);
+            Selection.activeObject = popupPrefab;
+            Debug.Log($"Created '{PopupPrefabPath}' and '{CellPrefabPath}'. UiManager loads the popup from Resources/{UiManager.PopupGridResourcePath} and parents it under your existing Canvas.");
         }
 
         private static GameObject CreateCellPrefab()
@@ -65,26 +41,16 @@ namespace Demo.Editor
             return prefab;
         }
 
-        private static GameObject CreateCanvasPrefab(GameObject cellPrefab)
+        private static GameObject CreatePopupPrefab(GameObject cellPrefab)
         {
-            var existing = AssetDatabase.LoadAssetAtPath<GameObject>(CanvasPrefabPath);
+            var existing = AssetDatabase.LoadAssetAtPath<GameObject>(PopupPrefabPath);
             if (existing != null) return existing;
 
-            var root = new GameObject(
-                "GridCanvas",
-                typeof(RectTransform),
-                typeof(Canvas),
-                typeof(CanvasScaler),
-                typeof(GraphicRaycaster),
-                typeof(UiGridController));
-
-            var canvas = root.GetComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceCamera;
-
-            var scaler = root.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.5f;
+            var root = new GameObject("PopupGrid", typeof(RectTransform), typeof(UiGridController));
+            var rootRect = root.GetComponent<RectTransform>();
+            rootRect.anchorMin = Vector2.zero;
+            rootRect.anchorMax = Vector2.one;
+            rootRect.offsetMin = rootRect.offsetMax = Vector2.zero;
 
             var viewportObject = new GameObject(
                 "Viewport",
@@ -93,7 +59,7 @@ namespace Demo.Editor
                 typeof(Image),
                 typeof(ScrollRect));
             var viewport = viewportObject.GetComponent<RectTransform>();
-            viewport.SetParent(root.transform, false);
+            viewport.SetParent(rootRect, false);
             viewport.anchorMin = Vector2.zero;
             viewport.anchorMax = Vector2.one;
             viewport.offsetMin = viewport.offsetMax = Vector2.zero;
@@ -144,9 +110,31 @@ namespace Demo.Editor
             markerImage.raycastTarget = false;
             markerObject.SetActive(false);
 
+            var closeObject = new GameObject("BtnClose", typeof(RectTransform), typeof(Image), typeof(Button));
+            var closeRect = closeObject.GetComponent<RectTransform>();
+            closeRect.SetParent(rootRect, false);
+            closeRect.anchorMin = closeRect.anchorMax = closeRect.pivot = new Vector2(1f, 1f);
+            closeRect.anchoredPosition = new Vector2(-20f, -20f);
+            closeRect.sizeDelta = new Vector2(90f, 90f);
+            closeObject.GetComponent<Image>().color = new Color(0.75f, 0.2f, 0.2f, 1f);
+
+            var labelObject = new GameObject("Label", typeof(RectTransform), typeof(Text));
+            var labelRect = labelObject.GetComponent<RectTransform>();
+            labelRect.SetParent(closeRect, false);
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = labelRect.offsetMax = Vector2.zero;
+            var label = labelObject.GetComponent<Text>();
+            label.text = "X";
+            label.alignment = TextAnchor.MiddleCenter;
+            label.fontSize = 48;
+            label.color = Color.white;
+            label.raycastTarget = false;
+            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
             var controller = root.GetComponent<UiGridController>();
             var serializedController = new SerializedObject(controller);
-            serializedController.FindProperty("canvas").objectReferenceValue = canvas;
+            serializedController.FindProperty("btnClose").objectReferenceValue = closeObject.GetComponent<Button>();
             serializedController.FindProperty("scrollRect").objectReferenceValue = viewportObject.GetComponent<ScrollRect>();
             serializedController.FindProperty("viewport").objectReferenceValue = viewport;
             serializedController.FindProperty("content").objectReferenceValue = content;
@@ -158,15 +146,17 @@ namespace Demo.Editor
             serializedController.FindProperty("cellPrefab").objectReferenceValue = cellPrefab;
             serializedController.ApplyModifiedPropertiesWithoutUndo();
 
-            var prefab = PrefabUtility.SaveAsPrefabAsset(root, CanvasPrefabPath);
+            var prefab = PrefabUtility.SaveAsPrefabAsset(root, PopupPrefabPath);
             Object.DestroyImmediate(root);
             return prefab;
         }
 
-        private static void EnsurePrefabFolder()
+        private static void EnsureFolders()
         {
-            if (!AssetDatabase.IsValidFolder(PrefabFolder))
-                AssetDatabase.CreateFolder("Assets", "Prefabs");
+            if (!AssetDatabase.IsValidFolder(PrefabFolder)) AssetDatabase.CreateFolder("Assets", "Prefabs");
+            if (!AssetDatabase.IsValidFolder("Assets/Resources/UI")) AssetDatabase.CreateFolder("Assets/Resources", "UI");
+            if (!AssetDatabase.IsValidFolder("Assets/Resources/UI/Popup")) AssetDatabase.CreateFolder("Assets/Resources/UI", "Popup");
+            if (!AssetDatabase.IsValidFolder(PopupFolder)) AssetDatabase.CreateFolder("Assets/Resources/UI/Popup", "Grid");
         }
     }
 }

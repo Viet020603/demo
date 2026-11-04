@@ -14,10 +14,10 @@ JSON format:
 - Grid size is detected automatically from the largest `cx` and `cy`.
 
 ## Canvas and grid
-- In the Unity Editor, run **Tools > Grid Demo > Create Canvas Prefabs and Scene Instance** before Play. This creates `Assets/Prefabs/GridCanvas.prefab` and `Assets/Prefabs/UICell.prefab`, then adds a `GridCanvas` prefab instance to the open scene.
+- In the Unity Editor, run **Tools > Grid Demo > Create Popup Prefabs** (optional). It creates `Assets/Resources/UI/Popup/Grid/PopupGrid.prefab` and `Assets/Prefabs/UICell.prefab` (skipped if they exist).
 - The Canvas prefab is a standalone scene root with editable `Viewport`, `Content`, and `SelectionMarker` children, plus the `UiGridController` settings. Adjust the prefab or scene instance before Play.
 - Canvas render mode is **Screen Space - Camera**. The controller uses its assigned `Canvas Camera`, otherwise `MainCamera` (and creates one if needed).
-- The Canvas hierarchy is `GridCanvas > Viewport > Content > SelectionMarker`. Only visible cell views are active; views leaving the viewport are reused while panning.
+- The popup hierarchy is `PopupGrid > Viewport > Content > SelectionMarker` (+ `BtnClose`). Only visible cell views are active; views leaving the viewport are reused while panning.
 - `Content > MapBackground` shows `Assets/Resources/Sprite/dat.png` and pans/zooms with the grid. Replace it via `Background Sprite` on `UiGridController` (or the `MapBackground` Image in the prefab); when empty, `Resources/Sprite/dat` is loaded.
 - Layout matches the reference: `Content` = grid + `Border Cells` (default 4) on every side. The ground covers it all, the 31x31 grid is drawn in the middle as `GridLines` (one mesh, one draw call; color/thickness are editable), and cells are transparent (`Cell Tint Alpha` = 0) so only icons and the orange selection show.
 - `Content > MapFrame` is an optional decorative frame (trees, clouds, water) with a transparent center. Assign your sprite to its Image (it enables itself when a sprite is set); it is drawn above the ground and below the grid.
@@ -45,3 +45,10 @@ JSON format:
 - Every visible cell is a pooled `Button` (`UICell.prefab` has `Button` + `Image`). Clicking a cell moves the orange marker and logs/raises `CellIdClicked(id)`. Hook your own logic there or edit the cell prefab.
 - Needs an `EventSystem` (created by `UiManager`) and a `GraphicRaycaster` on the canvas (added automatically).
 - Regenerate `GridCanvas.prefab` / `UICell.prefab` (delete them, run the menu) to pick up the new components; the runtime fallback adds missing ones anyway.
+
+## Popup pattern (no Canvas / Camera changes)
+
+- `UiGridController : PopupBase` no longer creates or edits a Canvas, CanvasScaler or Camera. `UiManager.GetPopupGrid()` instantiates the prefab (`Resources/UI/Popup/Grid/PopupGrid`, or `Popup Grid Prefab`) under `Panel Ui In Game` (empty = the first Canvas in the scene), then `Init(this)` once; `Show()` / `Close()` toggle it, `BtnClose` and `Esc` close.
+- Click/zoom coordinates use the camera of the parent Canvas (none for Overlay), so any render mode works.
+- The Start button is also created under that panel (or assign your own `Start Button`). A Canvas is created only if the scene has none.
+- Delete the old `GridCanvas.prefab` if you still have it; it is no longer used.

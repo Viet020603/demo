@@ -6,51 +6,87 @@ using UnityEngine.UI;
 namespace Demo.Gameplay
 {
     /// <summary>
-    /// Owns the Start button and the grid popup. The grid is only built and shown after the button is pressed.
-    /// Assign 'Grid Popup' / 'Start Button' in the inspector, or leave them empty to create them at runtime.
+    /// Owns the Start button and the grid popup. The popup is created lazily (GetPopupGrid), the same way the
+    /// other popups are, under an EXISTING UI panel: the Canvas and Camera of the scene are never touched.
     /// </summary>
     public class UiManager : MonoBehaviour
     {
-        [SerializeField] private UiGridController gridPopup;
+        public const string PopupGridResourcePath = "UI/Popup/Grid/PopupGrid";
+
+        [Tooltip("Parent of every popup (like panelUiInGame). Empty = the first Canvas found in the scene.")]
+        [SerializeField] private Transform panelUiInGame;
+        [Tooltip("Empty = Resources/" + PopupGridResourcePath)]
+        [SerializeField] private UiGridController popupGridPrefab;
         [SerializeField] private Button startButton;
         [SerializeField] private string startLabel = "START";
+
+        private UiGridController popupGrid;
 
         private void Awake()
         {
             if (GameManager.Instance == null) new GameObject("GameManager").AddComponent<GameManager>();
 
-            if (gridPopup == null)
-                gridPopup = FindFirstObjectByType<UiGridController>(FindObjectsInactive.Include);
-            if (gridPopup == null)
-            {
-                var go = new GameObject("UiGridController");
-                go.SetActive(false); // keep Awake/OnEnable from running before Init
-                gridPopup = go.AddComponent<UiGridController>();
-            }
-
-            gridPopup.Init(this);
-            gridPopup.Close();
-
             EnsureEventSystem();
+            if (panelUiInGame == null) panelUiInGame = FindUiParent();
             if (startButton == null) startButton = CreateStartButton();
-            startButton.onClick.AddListener(OnStartClicked);
+            startButton.onClick.AddListener(ShowPopupGrid);
         }
 
         private void OnDestroy()
         {
-            if (startButton != null) startButton.onClick.RemoveListener(OnStartClicked);
-            if (gridPopup != null) gridPopup.Dispose();
+            if (startButton != null) startButton.onClick.RemoveListener(ShowPopupGrid);
+            if (popupGrid != null) popupGrid.Dispose();
         }
 
-        public void OnStartClicked()
+        private UiGridController GetPopupGrid()
         {
-            startButton.gameObject.SetActive(false);
-            gridPopup.Show();
+            if (popupGrid == null)
+            {
+                var prefab = popupGridPrefab != null
+                    ? popupGridPrefab
+                    : Resources.Load<UiGridController>(PopupGridResourcePath);
+
+                if (prefab != null)
+                {
+                    popupGrid = Instantiate(prefab, panelUiInGame, false);
+                }
+                else
+                {
+                    var go = new GameObject("PopupGrid", typeof(RectTransform));
+                    go.transform.SetParent(panelUiInGame, false);
+                    popupGrid = go.AddComponent<UiGridController>();
+                }
+                popupGrid.Init(this);
+            }
+            return popupGrid;
         }
+
+        public void ShowPopupGrid()
+        {
+            if (startButton != null) startButton.gameObject.SetActive(false);
+            GetPopupGrid().Show();
+        }
+
+        public void ClosePopupGrid() => GetPopupGrid().Close();
 
         public void OnGridClosed()
         {
             if (startButton != null) startButton.gameObject.SetActive(true);
+        }
+
+        private static Transform FindUiParent()
+        {
+            var existing = FindFirstObjectByType<Canvas>();
+            if (existing != null) return existing.rootCanvas.transform;
+
+            // Only when the scene has no Canvas at all.
+            var go = new GameObject("UiCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            go.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            var scaler = go.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+            return go.transform;
         }
 
         private static void EnsureEventSystem()
@@ -61,19 +97,11 @@ namespace Demo.Gameplay
 
         private Button CreateStartButton()
         {
-            var canvasGo = new GameObject("StartCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            var canvas = canvasGo.GetComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 100;
-            var scaler = canvasGo.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1080f, 1920f);
-            scaler.matchWidthOrHeight = 0.5f;
-
             var buttonGo = new GameObject("StartButton", typeof(RectTransform), typeof(Image), typeof(Button));
             var rt = buttonGo.GetComponent<RectTransform>();
-            rt.SetParent(canvasGo.transform, false);
+            rt.SetParent(panelUiInGame, false);
             rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = Vector2.zero;
             rt.sizeDelta = new Vector2(420f, 140f);
             buttonGo.GetComponent<Image>().color = new Color(0.2f, 0.6f, 0.25f, 1f);
 
